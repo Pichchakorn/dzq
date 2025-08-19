@@ -40,13 +40,19 @@ type Ctx = {
     (payload: RegisterObj): Promise<boolean>;
   };
   logout: () => Promise<void>;
-  updateUserProfile: (patch: Partial<{ name: string; photoURL: string }>) => Promise<void>;
+  updateUserProfile: (patch: Partial<{ name: string }>) => Promise<void>;
 };
+
+// 🎲 ฟังก์ชันสร้าง avatar จาก DiceBear
+function dicebearAvatar(seed: string, style = "initials", format: "svg" | "png" = "svg") {
+  const s = encodeURIComponent(seed || "guest");
+  return `https://api.dicebear.com/7.x/${style}/${format}?seed=${s}`;
+}
 
 const AuthCtx = createContext<Ctx>(null as any);
 export const useAuth = () => useContext(AuthCtx);
 
-// --- ไวท์ลิสต์อีเมลแอดมินจาก .env (รองรับทั้ง Vite และ CRA) ---
+// --- whitelist admin ---
 const ADMIN_EMAILS_RAW =
   (import.meta as any).env?.VITE_ADMIN_EMAILS ||
   (process.env as any).REACT_APP_ADMIN_EMAIL ||
@@ -57,7 +63,6 @@ const ADMIN_EMAILS = ADMIN_EMAILS_RAW
   .map((s: string) => s.trim().toLowerCase())
   .filter(Boolean);
 
-// โหลด user ทุกครั้งที่ auth เปลี่ยน และกำหนด role
 async function loadUser(fb: FbUser): Promise<AppUser> {
   const uid = fb.uid;
   const ref = doc(db, "users", uid);
@@ -71,7 +76,7 @@ async function loadUser(fb: FbUser): Promise<AppUser> {
       id: uid,
       email,
       name: fb.displayName || "",
-      photoURL: fb.photoURL || "",
+      photoURL: fb.photoURL || dicebearAvatar(email),
       role: inWhitelist ? "admin" : "patient",
     };
     await setDoc(ref, base, { merge: true });
@@ -83,7 +88,7 @@ async function loadUser(fb: FbUser): Promise<AppUser> {
     id: uid,
     email,
     name: data.name ?? fb.displayName ?? "",
-    photoURL: data.photoURL ?? fb.photoURL ?? "",
+    photoURL: data.photoURL ?? fb.photoURL ?? dicebearAvatar(email),
     role: inWhitelist ? "admin" : (data.role as Role) || "patient",
   };
 }
@@ -126,7 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // overloads
+  // --- Register ---
   async function registerImpl(email: string, password: string, name: string): Promise<boolean>;
   async function registerImpl(payload: RegisterObj): Promise<boolean>;
   async function registerImpl(a: string | RegisterObj, b?: string, c?: string): Promise<boolean> {
@@ -135,19 +140,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ? { email: a.trim().toLowerCase(), password: b || "", name: c || "" }
         : { ...a, email: a.email.trim().toLowerCase() };
 
-    setIsLoading(true);
     try {
       const { user: fb } = await createUserWithEmailAndPassword(auth, form.email, form.password);
+
       if (form.name) await updateProfile(fb, { displayName: form.name });
 
-      // ตั้ง role ตั้งแต่แรก (whitelist มีสิทธิ์สูงสุด)
+      // ใช้ DiceBear Avatar ตั้งแต่แรก
+      const seed = form.name || form.email;
+      const photoURL = dicebearAvatar(seed, "initials", "svg");
+
       const role: Role = ADMIN_EMAILS.includes(form.email) ? "admin" : "patient";
       await setDoc(doc(db, "users", fb.uid), {
         id: fb.uid,
         email: form.email,
         name: form.name ?? "",
-        photoURL: fb.photoURL ?? "",
         role,
+        photoURL,
         phone: form.phone ?? "",
         dateOfBirth: form.dateOfBirth ?? "",
         medicalRights: form.medicalRights ?? "",
@@ -158,8 +166,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return true;
     } catch {
       return false;
-    } finally {
-      setIsLoading(false);
     }
   }
 
@@ -168,6 +174,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   };
 
+  // ✅ update เฉพาะ name (ไม่ยุ่งกับรูป)
   const updateUserProfile: Ctx["updateUserProfile"] = async (patch) => {
     if (!user) return;
     await updateDoc(doc(db, "users", user.id), patch as any);

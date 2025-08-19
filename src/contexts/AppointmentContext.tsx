@@ -40,7 +40,7 @@ type Ctx = {
   ) => Promise<string>;
 
   updateAppointment: (id: string, patch: Partial<Appointment>) => Promise<void>;
-  clearQueue: (ymd: string, to: "completed" | "cancelled") => Promise<number>;
+  clearQueue: (ymd: string, to: "completed" | "cancelled", reason?: string) => Promise<number>;
   getAvailableSlots: (ymd: string) => string[];
 
   pushNotification: (to: string, title: string, body: string) => Promise<void>;
@@ -133,19 +133,16 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
   const updateAppointment: Ctx["updateAppointment"] = async (id, patch) => {
     await updateDoc(doc(db, "appointments", id), patch as any);
 
-    // ถ้ามีการเปลี่ยนสถานะ → ส่งการแจ้งเตือน
     if (patch.status) {
       const ap = appointments.find((x) => x.id === id);
       if (ap) {
-        const reason = (patch as any).cancelReason?.trim();
-        const body =
-          patch.status === "cancelled"
-            ? `ยกเลิกนัด: ${ap.treatmentType} วันที่ ${ap.date} ${ap.time}${reason ? ` • เหตุผล: ${reason}` : ""}`
-            : `สถานะ: ${patch.status}`;
         await addDoc(collection(db, "notifications"), {
           to: ap.patientId,
           title: "อัปเดตสถานะนัดหมาย",
-          body,
+          body:
+            patch.status === "cancelled"
+              ? `ยกเลิกนัด: ${ap.treatmentType} • เหตุผล: ${patch.cancelReason || "-"}`
+              : `สถานะ: ${patch.status}`,
           read: false,
           createdAt: serverTimestamp(),
         });
@@ -154,15 +151,18 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
   };
 
 
-  const clearQueue: Ctx["clearQueue"] = async (ymd, to) => {
+  const clearQueue: Ctx["clearQueue"] = async (ymd, to, reason) => {
     const q = query(
       collection(db, "appointments"),
       where("date", "==", ymd),
       where("status", "==", "scheduled")
     );
     const snap = await getDocs(q);
-    const reason = to === "cancelled" ? "คลินิกยกเลิกคิววันนี้โดยผู้ดูแลระบบ" : "";
-    const jobs = snap.docs.map((d) => updateDoc(d.ref, { status: to, cancelReason: reason }));
+    const jobs = snap.docs.map((d) =>
+      updateDoc(d.ref, to === "cancelled"
+        ? { status: "cancelled", cancelReason: reason || "ยกเลิกโดยคลินิก" }
+        : { status: "completed" })
+    );
     await Promise.all(jobs);
     return snap.size;
   };

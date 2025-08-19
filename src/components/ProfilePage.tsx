@@ -1,52 +1,22 @@
 // src/components/ProfilePage.tsx
-import React, { useRef, useState } from "react";
+import React, { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
-import { Upload, User as UserIcon } from "lucide-react";
+import { User as UserIcon } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
-import { storage } from "../lib/firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { toast } from "sonner";
 
 export default function ProfilePage() {
   const { user, updateUserProfile } = useAuth();
   const [name, setName] = useState(user?.name ?? "");
   const [loading, setLoading] = useState(false);
-  const fileRef = useRef<HTMLInputElement | null>(null);
-
-  const pid = user?.id ?? (user as any)?.uid ?? ""; // กันทั้ง id/uid
-
-  const pick = () => fileRef.current?.click();
-
-  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !pid) return;
-    try {
-      setLoading(true);
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      // เปลี่ยนชื่อไฟล์ทุกครั้ง กันแคช
-      const storageRef = ref(storage, `avatars/${pid}/${Date.now()}.${ext}`);
-      await uploadBytes(storageRef, file);
-      let url = await getDownloadURL(storageRef);
-      // cache buster เผื่อ CDN/เบราว์เซอร์แคช
-      url = `${url}${url.includes("?") ? "&" : "?"}v=${Date.now()}`;
-      await updateUserProfile({ photoURL: url });
-      toast.success("อัปโหลดรูปโปรไฟล์สำเร็จ");
-    } catch (err) {
-      console.error(err);
-      toast.error("อัปโหลดรูปไม่สำเร็จ");
-    } finally {
-      setLoading(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
 
   const save = async () => {
     try {
       setLoading(true);
-      await updateUserProfile({ name });
+      await updateUserProfile({ name }); // ✅ อัปเดตได้เฉพาะ name
       toast.success("บันทึกโปรไฟล์สำเร็จ");
     } catch (e) {
       console.error(e);
@@ -63,6 +33,7 @@ export default function ProfilePage() {
           <CardTitle>ข้อมูลส่วนตัว</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Avatar (แสดงผลอย่างเดียว) */}
           <div className="flex items-center gap-4">
             <div className="w-16 h-16 rounded-full overflow-hidden bg-gray-100 flex items-center justify-center">
               {user?.photoURL ? (
@@ -70,13 +41,6 @@ export default function ProfilePage() {
               ) : (
                 <UserIcon className="w-8 h-8 text-gray-400" />
               )}
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={pick} disabled={loading}>
-                <Upload className="w-4 h-4 mr-1" />
-                เปลี่ยนรูป
-              </Button>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
             </div>
           </div>
 
@@ -90,7 +54,9 @@ export default function ProfilePage() {
             <Input value={user?.email ?? ""} readOnly />
           </div>
 
-          <Button onClick={save} disabled={loading}>บันทึก</Button>
+          <Button onClick={save} disabled={loading}>
+            {loading ? "กำลังบันทึก..." : "บันทึก"}
+          </Button>
         </CardContent>
       </Card>
     </div>

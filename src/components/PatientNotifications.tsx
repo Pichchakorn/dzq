@@ -112,7 +112,7 @@ export default function PatientNotifications() {
                       </p>
                     )}
                   </div>
-                  <Badge variant="destructive">ยกเลิก</Badge>
+                  <Badge variant="dark">ยกเลิก</Badge>
                 </div>
               ))}
             </div>

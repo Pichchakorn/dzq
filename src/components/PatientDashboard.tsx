@@ -1,5 +1,5 @@
 // src/components/PatientDashboard.tsx
-import React, { useRef, useState, useMemo } from "react";
+import React, { useMemo } from "react";
 import {
   Calendar,
   Clock,
@@ -7,7 +7,6 @@ import {
   Bell,
   History,
   Plus,
-  Upload,
   Image as ImageIcon,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -15,9 +14,6 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { useAuth } from "../contexts/AuthContext";
 import { useAppointments } from "../contexts/AppointmentContext";
-import { storage } from "../lib/firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { toast } from "sonner";
 import type { Appointment } from "../types";
 
 interface PatientDashboardProps {
@@ -27,7 +23,6 @@ interface PatientDashboardProps {
 type Status = Appointment["status"];
 
 // --- helpers ------------------------------------------------
-const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
 const key = (d: string, t: string) => `${d} ${t}`;
 const cmpAsc = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const cmpDesc = (a: string, b: string) => (a > b ? -1 : a < b ? 1 : 0);
@@ -44,17 +39,16 @@ const statusLabel = (s: Status) =>
   s === "cancelled" ? "ยกเลิก"   : "นัดหมาย";
 
 const statusVariant = (s: Status) =>
-  s === "completed" ? "default" :
+  s === "completed" ? "success" :
   s === "missed"    ? "destructive" :
-  s === "cancelled" ? "destructive" : "secondary";
+  s === "cancelled" ? "dark" : "secondary";
+
 
 // ------------------------------------------------------------
 
 export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
-  const { user, updateUserProfile } = useAuth();
+  const { user } = useAuth();
   const { appointments } = useAppointments();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploading, setUploading] = useState(false);
 
   const pid = user?.id ?? "";
 
@@ -76,65 +70,28 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
 
   // นัดล่าสุด (ทุกสถานะ) เอา 3 รายการล่าสุด
   const recentAppointments = useMemo(
-    () => [...userAppointments].sort((a, b) => cmpDesc(key(a.date, a.time), key(b.date, b.time))).slice(0, 3),
+    () =>
+      [...userAppointments]
+        .sort((a, b) => cmpDesc(key(a.date, a.time), key(b.date, b.time)))
+        .slice(0, 3),
     [userAppointments]
   );
 
-  const onPickFile = () => fileInputRef.current?.click();
-
-  const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !pid) return;
-    try {
-      setUploading(true);
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const storageRef = ref(storage, `avatars/${pid}.${ext}`);
-      await uploadBytes(storageRef, file);
-      const url = await getDownloadURL(storageRef);
-      await updateUserProfile({ photoURL: url });
-      toast.success("อัปโหลดรูปโปรไฟล์สำเร็จ");
-    } catch (err) {
-      console.error(err);
-      toast.error("อัปโหลดรูปไม่สำเร็จ");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
   return (
     <div className="space-y-6">
-      {/* Welcome + Avatar */}
+      {/* Welcome + Avatar (display only) */}
       <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-6 rounded-lg flex items-center justify-between">
         <div>
           <h1 className="text-2xl mb-2">สวัสดี, {user?.name ?? "ผู้ใช้งาน"}</h1>
           <p className="text-blue-100">ยินดีต้อนรับสู่ระบบจองคิวทันตกรรม DZQ</p>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="w-14 h-14 rounded-full overflow-hidden bg-white/20 flex items-center justify-center">
-            {user?.photoURL ? (
-              <img src={user.photoURL} alt="avatar" className="w-full h-full object-cover" />
-            ) : (
-              <UserIcon className="w-7 h-7 text-white" />
-            )}
-          </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={onPickFile}
-            disabled={uploading}
-            className="bg-white text-blue-700 hover:bg-white/90"
-          >
-            {uploading ? "กำลังอัปโหลด..." : (<><Upload className="w-4 h-4 mr-1" />เปลี่ยนรูป</>)}
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={onFileSelected}
-          />
+        <div className="w-14 h-14 rounded-full overflow-hidden bg-white/20 flex items-center justify-center">
+          {user?.photoURL ? (
+            <img src={user.photoURL} alt="avatar" className="w-full h-full object-cover" />
+          ) : (
+            <UserIcon className="w-7 h-7 text-white" />
+          )}
         </div>
       </div>
 
@@ -231,16 +188,21 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
                   <p className="text-sm text-gray-600">
                     {new Date(`${appointment.date}T00:00:00`).toLocaleDateString("th-TH")} - {appointment.time} น.
                   </p>
+
                   {isCancelled && appointment.cancelReason && (
-                    <p className="text-xs text-red-600 mt-1">เหตุผล: {appointment.cancelReason}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      เหตุผล: {appointment.cancelReason}
+                    </p>
                   )}
                 </div>
+
                 <Badge variant={statusVariant(appointment.status)}>
                   {statusLabel(appointment.status)}
                 </Badge>
               </div>
             );
           })}
+
 
           {userAppointments.length === 0 && (
             <p className="text-center text-gray-500 py-8">ยังไม่มีประวัติการรักษา</p>

@@ -23,9 +23,9 @@ const statusLabel = (s: Status) =>
     : "นัดหมาย";
 
 const statusVariant = (s: Status) =>
-  s === "completed" ? "default"
+  s === "completed" ? "success"
     : s === "missed" ? "destructive"
-    : s === "cancelled" ? "destructive"
+    : s === "cancelled" ? "dark"
     : "secondary";
 
 export default function PatientHistory() {
