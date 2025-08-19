@@ -96,21 +96,93 @@ export default function BookingPage({ onBack }: BookingPageProps) {
     activeTreatments.find((t) => t.id === id)?.label ?? "";
 
   const canSubmit = Boolean(selectedDate && treatmentId && time);
-
   const submit = async () => {
     if (!user || !canSubmit || !selectedDate) return;
 
-    await createAppointment({
-      patientId: user.id,                                 // context ของคุณให้มาเป็น id
-      patientName: user.name || user.email || "ผู้ป่วย",
-      treatmentType: labelFrom(treatmentId),              // เก็บชื่อบริการลง appointment
-      date: fmtYMD(selectedDate),
-      time,
-      status: "scheduled",
-    } as any);
+    const y = fmtYMD(selectedDate);
+    if (lockedTimes.has(time) || bookedTimes.has(time) || isPastTime(time)) {
+      alert("ช่วงเวลานี้ไม่สามารถจองได้ (ถูกล็อค/ถูกจองแล้ว/เลยเวลา)");
+      return;
+    }
+
+ try {
+     await createAppointment({
+       patientId: user.id,
+       patientName: user.name || user.email || "ผู้ป่วย",
+       treatmentType: labelFrom(treatmentId),
+       date: y,
+       time,
+       status: "scheduled",
+     } as any);
+   } catch (err: any) {
+     // ถ้า rules กันไว้จะมาทางนี้
+     alert(err?.message || "จองไม่สำเร็จ");
+     return;
+   }
 
     onBack?.();
   };
+
+  const { appointments, clinicSettings, lockedSlots } = useAppointments();
+  function buildAllSlots(s: { start: string; end: string }, stepMin: number, breakTime: {start:string; end:string}) {
+  const toMin = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const from = toMin(s.start);
+  const to = toMin(s.end);
+  const brS = toMin(breakTime.start);
+  const brE = toMin(breakTime.end);
+
+  const out: string[] = [];
+  for (let m = from; m + stepMin <= to; m += stepMin) {
+    if (m >= brS && m < brE) continue;                 // ข้ามช่วงพัก
+    const hh = String(Math.floor(m / 60)).padStart(2, "0");
+    const mm = String(m % 60).padStart(2, "0");
+    out.push(`${hh}:${mm}`);
+  }
+  return out;
+}
+
+const ymd = selectedDate ? `${selectedDate.getFullYear()}-${String(selectedDate.getMonth()+1).padStart(2,"0")}-${String(selectedDate.getDate()).padStart(2,"0")}` : "";
+
+const allSlots = useMemo(() => {
+  if (!selectedDate) return [];
+  return buildAllSlots(clinicSettings.workingHours, clinicSettings.slotDuration, clinicSettings.breakTime);
+}, [selectedDate, clinicSettings]);
+
+// เวลาที่ถูกจองแล้ว (นับเฉพาะสถานะที่ยังถือว่าจองคิวอยู่)
+const bookedTimes = useMemo(() => {
+  if (!ymd) return new Set<string>();
+  return new Set(
+    appointments
+      .filter(a => a.date === ymd && (a.status === "scheduled")) // ถ้าคุณมี "missed" ด้วย ให้ไม่ต้องนับ
+      .map(a => a.time)
+  );
+}, [appointments, ymd]);
+
+  // ถ้าต้องการตัดเวลาที่ผ่านมาใน "วันนี้"
+  const now = new Date();
+  const isToday = selectedDate && selectedDate.toDateString() === now.toDateString();
+  const isPastTime = (t: string) => {
+    if (!isToday) return false;
+    const [h,m] = t.split(":").map(Number);
+    const dt = new Date(selectedDate!);
+    dt.setHours(h, m, 0, 0);
+    return dt <= now;
+  };
+
+  // เพิ่มใต้ bookedTimes
+  const lockedTimes = useMemo(() => {
+    if (!ymd) return new Set<string>();
+    return new Set(
+      lockedSlots
+        .filter(ls => ls.date === ymd)
+        .map(ls => ls.time)
+    );
+  }, [lockedSlots, ymd]);
+
+
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -172,19 +244,24 @@ export default function BookingPage({ onBack }: BookingPageProps) {
           <CardContent>
             {!selectedDate ? (
               <p className="text-sm text-gray-500">กรุณาเลือกวันที่ก่อน</p>
-            ) : slots.length === 0 ? (
-              <p className="text-sm text-gray-500">วันนี้คิวเต็มแล้ว</p>
+            ) : allSlots.length === 0 ? (
+              <p className="text-sm text-gray-500">ไม่มีช่วงเวลาให้เลือก</p>
             ) : (
               <div className="grid grid-cols-2 gap-2">
-                {slots.map((s) => (
-                  <Button
-                    key={s}
-                    variant={s === time ? "default" : "outline"}
-                    onClick={() => setTime(s)}
-                  >
-                    {s} น.
-                  </Button>
-                ))}
+                {allSlots.map((s) => {
+                  const locked = bookedTimes.has(s) || lockedTimes.has(s) || isPastTime(s);
+                  return (
+                    <Button
+                      key={s}
+                      variant={s === time ? "default" : "outline"}
+                      onClick={() => !locked && setTime(s)}
+                      disabled={locked}
+                      className={locked ? "opacity-50 pointer-events-none" : ""}
+                    >
+                      {s} น.
+                    </Button>
+                  );
+                })}
               </div>
             )}
           </CardContent>

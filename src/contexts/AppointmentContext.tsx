@@ -4,12 +4,14 @@ import { db } from "../lib/firebase";
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -17,23 +19,29 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
-import type { Appointment } from "../types";   // ← ใช้ type กลางเพียงตัวเดียว (มี "missed" ด้วย)
+import type { Appointment } from "../types";
 
-/* -------------------------- Types -------------------------- */
-
+/* ---------------- Types ---------------- */
 export type ClinicSettings = {
-  workingHours: { start: string; end: string }; // "HH:mm"
-  breakTime: { start: string; end: string };     // "HH:mm"
-  slotDuration: number;                          // minutes
-  holidays: string[];                            // ["YYYY-MM-DD", ...]
+  workingHours: { start: string; end: string };
+  breakTime: { start: string; end: string };
+  slotDuration: number;
+  holidays: string[];
 };
 
-type TreatmentType = { id: string; name: string; duration: number; price: number };
+export type TreatmentType = { id: string; name: string; duration: number; price: number };
+
+export type LockedSlot = {
+  date: string;
+  time: string;
+  reason?: string;
+};
 
 type Ctx = {
   appointments: Appointment[];
   treatmentTypes: TreatmentType[];
   clinicSettings: ClinicSettings;
+  lockedSlots: LockedSlot[];
 
   createAppointment: (
     a: Omit<Appointment, "id" | "createdAt" | "status"> & { status?: "scheduled" }
@@ -44,15 +52,16 @@ type Ctx = {
   getAvailableSlots: (ymd: string) => string[];
 
   pushNotification: (to: string, title: string, body: string) => Promise<void>;
-
   updateClinicSettings: (s: Partial<ClinicSettings>) => Promise<void>;
   setTreatmentTypes: (list: TreatmentType[]) => Promise<void>;
+
+  // สำหรับแอดมิน
+  lockSlot: (date: string, time: string, reason?: string) => Promise<void>;
+  unlockSlot: (date: string, time: string) => Promise<void>;
 };
 
 const AppointmentsCtx = createContext<Ctx>({} as any);
 export const useAppointments = () => useContext(AppointmentsCtx);
-
-/* ----------------------- Defaults ----------------------- */
 
 const DEFAULT_SETTINGS: ClinicSettings = {
   workingHours: { start: "09:00", end: "17:00" },
@@ -61,33 +70,33 @@ const DEFAULT_SETTINGS: ClinicSettings = {
   holidays: [],
 };
 
-/* -------------------- Provider -------------------- */
-
+/* ---------------- Provider ---------------- */
 export function AppointmentProvider({ children }: { children: React.ReactNode }) {
   const { user, isAdmin } = useAuth();
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [clinicSettings, setClinicSettings] = useState<ClinicSettings>(DEFAULT_SETTINGS);
   const [treatmentTypes, setTT] = useState<TreatmentType[]>([]);
+  const [lockedSlots, setLockedSlots] = useState<LockedSlot[]>([]);
 
-  // Stream นัดหมาย (ทั้งหมดถ้าเป็นแอดมิน, ไม่งั้นเฉพาะของ user.id)
+  /* Stream appointments */
   useEffect(() => {
     if (!user) return;
-
     const col = collection(db, "appointments");
     const q = isAdmin
       ? query(col, orderBy("date"), orderBy("time"))
       : query(col, where("patientId", "==", user.id), orderBy("date"), orderBy("time"));
 
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Appointment[];
+    return onSnapshot(q, (snap) => {
+      const list: Appointment[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any),
+      }));
       setAppointments(list);
     });
-
-    return unsub;
   }, [user?.id, isAdmin]);
 
-  // โหลด clinic settings และ treatment types
+  /* Load clinic settings + treatments */
   useEffect(() => {
     (async () => {
       const s = await getDoc(doc(db, "clinicSettings", "singleton"));
@@ -96,60 +105,66 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       }
 
       const t = await getDocs(collection(db, "treatmentTypes"));
-      setTT(t.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as TreatmentType[]);
+      setTT(
+        t.docs.map(
+          (d) =>
+            ({
+              id: d.id,
+              ...(d.data() as any),
+            } as TreatmentType)
+        )
+      );
     })();
   }, []);
 
-  /* -------------------- Actions -------------------- */
+  /* Stream locked slots */
+  useEffect(() => {
+    const col = collection(db, "lockedSlots");
+    return onSnapshot(col, (snap) => {
+      const list: LockedSlot[] = snap.docs.map((d) => d.data() as LockedSlot);
+      setLockedSlots(list);
+    });
+  }, []);
 
+  /* Actions */
   const createAppointment: Ctx["createAppointment"] = async (a) => {
-    const payload: Omit<Appointment, "id"> = {
+    const payload = {
       patientId: a.patientId,
       patientName: a.patientName,
       treatmentType: a.treatmentType,
       date: a.date,
       time: a.time,
-      status: "scheduled",
+      status: "scheduled" as const,
       createdAt: new Date().toISOString(),
     };
 
-    const ref = await addDoc(collection(db, "appointments"), {
-      ...payload,
-      createdAtServer: serverTimestamp(),
+    await runTransaction(db, async (tx) => {
+      // กันจองซ้ำ
+      const col = collection(db, "appointments");
+      const q = query(
+        col,
+        where("date", "==", payload.date),
+        where("time", "==", payload.time),
+        where("status", "==", "scheduled")
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) throw new Error("ช่วงเวลานี้ถูกจองแล้ว");
+
+      // กันเวลาที่ล็อคแล้ว
+      const lockedRef = doc(db, "lockedSlots", `${payload.date}_${payload.time}`);
+      const lockedSnap = await tx.get(lockedRef);
+      if (lockedSnap.exists()) throw new Error("ช่วงเวลานี้ถูกล็อคแล้ว");
+
+      const ref = doc(col);
+      tx.set(ref, { ...payload, createdAtServer: serverTimestamp() });
     });
 
-    // แจ้งเตือนผู้ป่วย
-    await addDoc(collection(db, "notifications"), {
-      to: a.patientId,
-      title: "จองนัดสำเร็จ",
-      body: `${a.treatmentType} วันที่ ${a.date} เวลา ${a.time}`,
-      read: false,
-      createdAt: serverTimestamp(),
-    });
-
-    return ref.id;
+    return "ok";
   };
 
   const updateAppointment: Ctx["updateAppointment"] = async (id, patch) => {
     await updateDoc(doc(db, "appointments", id), patch as any);
-
-    if (patch.status) {
-      const ap = appointments.find((x) => x.id === id);
-      if (ap) {
-        await addDoc(collection(db, "notifications"), {
-          to: ap.patientId,
-          title: "อัปเดตสถานะนัดหมาย",
-          body:
-            patch.status === "cancelled"
-              ? `ยกเลิกนัด: ${ap.treatmentType} • เหตุผล: ${patch.cancelReason || "-"}`
-              : `สถานะ: ${patch.status}`,
-          read: false,
-          createdAt: serverTimestamp(),
-        });
-      }
-    }
   };
-
 
   const clearQueue: Ctx["clearQueue"] = async (ymd, to, reason) => {
     const q = query(
@@ -159,9 +174,12 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     );
     const snap = await getDocs(q);
     const jobs = snap.docs.map((d) =>
-      updateDoc(d.ref, to === "cancelled"
-        ? { status: "cancelled", cancelReason: reason || "ยกเลิกโดยคลินิก" }
-        : { status: "completed" })
+      updateDoc(
+        d.ref,
+        to === "cancelled"
+          ? { status: "cancelled", cancelReason: reason || "ยกเลิกโดยคลินิก" }
+          : { status: "completed" }
+      )
     );
     await Promise.all(jobs);
     return snap.size;
@@ -182,11 +200,9 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     setClinicSettings((prev) => ({ ...prev, ...s }));
   };
 
-  // เขียนประเภทการรักษาแบบ upsert (batch)
   const setTreatmentTypes: Ctx["setTreatmentTypes"] = async (list) => {
     const batch = writeBatch(db);
     const col = collection(db, "treatmentTypes");
-
     list.forEach((t) => {
       const id = t.id || crypto.randomUUID();
       batch.set(
@@ -195,13 +211,20 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
         { merge: true }
       );
     });
-
     await batch.commit();
     setTT(list.map((t) => ({ ...t, id: t.id || "" })));
   };
 
-  /* -------------------- Helpers -------------------- */
+  /* Lock/Unlock slot */
+  const lockSlot: Ctx["lockSlot"] = async (date, time, reason) => {
+    await setDoc(doc(db, "lockedSlots", `${date}_${time}`), { date, time, reason });
+  };
 
+  const unlockSlot: Ctx["unlockSlot"] = async (date, time) => {
+    await deleteDoc(doc(db, "lockedSlots", `${date}_${time}`));
+  };
+
+  /* Helpers */
   const getAvailableSlots: Ctx["getAvailableSlots"] = (ymd) => {
     if (clinicSettings.holidays.includes(ymd)) return [];
 
@@ -209,7 +232,6 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       const [h, m] = t.split(":").map(Number);
       return h * 60 + m;
     };
-
     const from = toMin(clinicSettings.workingHours.start);
     const to = toMin(clinicSettings.workingHours.end);
     const brS = toMin(clinicSettings.breakTime.start);
@@ -218,28 +240,27 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
 
     const slots: string[] = [];
     for (let m = from; m + step <= to; m += step) {
-      if (m >= brS && m < brE) continue; // ตัดช่วงพัก
+      if (m >= brS && m < brE) continue;
       const hh = String(Math.floor(m / 60)).padStart(2, "0");
       const mm = String(m % 60).padStart(2, "0");
       slots.push(`${hh}:${mm}`);
     }
 
     const booked = new Set(
-      appointments
-        .filter((a) => a.date === ymd && a.status === "scheduled")
-        .map((a) => a.time)
+      appointments.filter((a) => a.date === ymd && a.status === "scheduled").map((a) => a.time)
     );
+    const locked = new Set(lockedSlots.filter((s) => s.date === ymd).map((s) => s.time));
 
-    return slots.filter((t) => !booked.has(t));
+    return slots.filter((t) => !booked.has(t) && !locked.has(t));
   };
 
-  /* -------------------- Memo value -------------------- */
-
-  const value = useMemo(
+  /* Context value */
+  const value: Ctx = useMemo(
     () => ({
       appointments,
       treatmentTypes,
       clinicSettings,
+      lockedSlots,
       createAppointment,
       updateAppointment,
       clearQueue,
@@ -247,11 +268,11 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       pushNotification,
       updateClinicSettings,
       setTreatmentTypes,
+      lockSlot,
+      unlockSlot,
     }),
-    [appointments, treatmentTypes, clinicSettings]
+    [appointments, treatmentTypes, clinicSettings, lockedSlots]
   );
-
-  
 
   return <AppointmentsCtx.Provider value={value}>{children}</AppointmentsCtx.Provider>;
 }
