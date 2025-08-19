@@ -137,16 +137,22 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     if (patch.status) {
       const ap = appointments.find((x) => x.id === id);
       if (ap) {
+        const reason = (patch as any).cancelReason?.trim();
+        const body =
+          patch.status === "cancelled"
+            ? `ยกเลิกนัด: ${ap.treatmentType} วันที่ ${ap.date} ${ap.time}${reason ? ` • เหตุผล: ${reason}` : ""}`
+            : `สถานะ: ${patch.status}`;
         await addDoc(collection(db, "notifications"), {
           to: ap.patientId,
           title: "อัปเดตสถานะนัดหมาย",
-          body: `สถานะ: ${patch.status}`,
+          body,
           read: false,
           createdAt: serverTimestamp(),
         });
       }
     }
   };
+
 
   const clearQueue: Ctx["clearQueue"] = async (ymd, to) => {
     const q = query(
@@ -155,7 +161,8 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       where("status", "==", "scheduled")
     );
     const snap = await getDocs(q);
-    const jobs = snap.docs.map((d) => updateDoc(d.ref, { status: to }));
+    const reason = to === "cancelled" ? "คลินิกยกเลิกคิววันนี้โดยผู้ดูแลระบบ" : "";
+    const jobs = snap.docs.map((d) => updateDoc(d.ref, { status: to, cancelReason: reason }));
     await Promise.all(jobs);
     return snap.size;
   };
@@ -243,6 +250,8 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     }),
     [appointments, treatmentTypes, clinicSettings]
   );
+
+  
 
   return <AppointmentsCtx.Provider value={value}>{children}</AppointmentsCtx.Provider>;
 }

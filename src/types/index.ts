@@ -28,6 +28,7 @@ export type Appointment = {
   time: string;   // HH:mm
   status: "scheduled" | "completed" | "cancelled" | "missed";
   createdAt: string;
+  cancelReason?: string;
 };
 
 /** Treatment type information */

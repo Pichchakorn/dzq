@@ -222,17 +222,26 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
           <CardDescription>ประวัติการเข้ารับการรักษา</CardDescription>
         </CardHeader>
         <CardContent>
-          {recentAppointments.map((a) => (
-            <div key={a.id} className="flex items-center justify-between py-3 border-b last:border-b-0">
-              <div>
-                <p className="font-medium">{a.treatmentType}</p>
-                <p className="text-sm text-gray-600">
-                  {new Date(`${a.date}T00:00:00`).toLocaleDateString("th-TH")} - {a.time} น.
-                </p>
+          {recentAppointments.map((appointment) => {
+            const isCancelled = appointment.status === "cancelled";
+            return (
+              <div key={appointment.id} className="flex items-center justify-between py-3 border-b last:border-b-0">
+                <div>
+                  <p className="font-medium">{appointment.treatmentType}</p>
+                  <p className="text-sm text-gray-600">
+                    {new Date(`${appointment.date}T00:00:00`).toLocaleDateString("th-TH")} - {appointment.time} น.
+                  </p>
+                  {isCancelled && appointment.cancelReason && (
+                    <p className="text-xs text-red-600 mt-1">เหตุผล: {appointment.cancelReason}</p>
+                  )}
+                </div>
+                <Badge variant={statusVariant(appointment.status)}>
+                  {statusLabel(appointment.status)}
+                </Badge>
               </div>
-              <Badge variant={statusVariant(a.status)}>{statusLabel(a.status)}</Badge>
-            </div>
-          ))}
+            );
+          })}
+
           {userAppointments.length === 0 && (
             <p className="text-center text-gray-500 py-8">ยังไม่มีประวัติการรักษา</p>
           )}

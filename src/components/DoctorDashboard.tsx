@@ -63,8 +63,10 @@ export function DoctorDashboard() {
     await updateAppointment(id, { status: "completed" });
   };
   const handleCancelAppointment = async (id: string) => {
-    await updateAppointment(id, { status: "cancelled" });
+    const reason = window.prompt("ใส่เหตุผลการยกเลิก (ไม่บังคับ)", "");
+    await updateAppointment(id, { status: "cancelled", cancelReason: reason || "" });
   };
+
   const handleClearToday = async (to: "completed" | "cancelled") => {
     if (!clearQueue) return;
     await clearQueue(selectedDate, to);
