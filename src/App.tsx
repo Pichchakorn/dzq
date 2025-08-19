@@ -9,7 +9,8 @@ import { DoctorDashboard } from "./components/DoctorDashboard";
 import BookingPage from "./components/BookingPage";
 import { SettingsPage } from "./components/SettingsPage";
 import ProfilePage from "./components/ProfilePage";
-import PatientHistory from "./components/PatientHistory"; // ✅ ใช้คอมโพเนนท์จริง
+import PatientHistory from "./components/PatientHistory";
+import PatientNotifications from "./components/PatientNotifications";
 import { Toaster } from "./components/ui/sonner";
 import "./styles/globals.css";
 
@@ -51,25 +52,16 @@ function AppContent() {
     switch (currentPage as PatientPages) {
       case "dashboard":
         return <PatientDashboard onNavigate={(p) => setCurrentPage(p as Page)} />;
-
       case "booking":
         return <BookingPage onBack={() => setCurrentPage("dashboard")} />;
-
       case "history":
-        return <PatientHistory />; // ✅ แสดงประวัติจริง
-
+        // ✅ ประวัติ = completed เท่านั้น
+        return <PatientHistory />;
       case "notifications":
-        // ถ้ายังไม่มีหน้า แสดง placeholder ไปก่อน
-        return (
-          <div className="p-6">
-            <h1 className="text-2xl mb-4">การแจ้งเตือน</h1>
-            <p className="text-gray-600">หน้านี้จะแสดงการแจ้งเตือนต่างๆ</p>
-          </div>
-        );
-
+        // ✅ แจ้งเตือน = scheduled เท่านั้น
+        return <PatientNotifications />;
       case "profile":
-        return <ProfilePage />; // ✅ เอาไว้ตัวเดียว
-
+        return <ProfilePage />;
       default:
         return <PatientDashboard onNavigate={(p) => setCurrentPage(p as Page)} />;
     }

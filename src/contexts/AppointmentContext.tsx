@@ -17,19 +17,9 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { useAuth } from "./AuthContext";
+import type { Appointment } from "../types";   // ← ใช้ type กลางเพียงตัวเดียว (มี "missed" ด้วย)
 
 /* -------------------------- Types -------------------------- */
-
-export type Appointment = {
-  id: string;
-  patientId: string;
-  patientName: string;
-  treatmentType: string;
-  date: string;   // YYYY-MM-DD
-  time: string;   // HH:mm
-  status: "scheduled" | "completed" | "cancelled";
-  createdAt: string; // ISO string (client log); also createdAtServer on server
-};
 
 export type ClinicSettings = {
   workingHours: { start: string; end: string }; // "HH:mm"
@@ -97,7 +87,7 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     return unsub;
   }, [user?.id, isAdmin]);
 
-  // โหลด clinic settings และ treatment types (อ่านได้สาธารณะตามกฎ Firestore ที่แนะนำ)
+  // โหลด clinic settings และ treatment types
   useEffect(() => {
     (async () => {
       const s = await getDoc(doc(db, "clinicSettings", "singleton"));
@@ -117,8 +107,8 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       patientId: a.patientId,
       patientName: a.patientName,
       treatmentType: a.treatmentType,
-      date: a.date, // "YYYY-MM-DD"
-      time: a.time, // "HH:mm"
+      date: a.date,
+      time: a.time,
       status: "scheduled",
       createdAt: new Date().toISOString(),
     };
@@ -206,7 +196,6 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
   /* -------------------- Helpers -------------------- */
 
   const getAvailableSlots: Ctx["getAvailableSlots"] = (ymd) => {
-    // ปิดบริการในวันหยุด
     if (clinicSettings.holidays.includes(ymd)) return [];
 
     const toMin = (t: string) => {
@@ -222,14 +211,12 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
 
     const slots: string[] = [];
     for (let m = from; m + step <= to; m += step) {
-      // ตัดช่วงพัก
-      if (m >= brS && m < brE) continue;
+      if (m >= brS && m < brE) continue; // ตัดช่วงพัก
       const hh = String(Math.floor(m / 60)).padStart(2, "0");
       const mm = String(m % 60).padStart(2, "0");
       slots.push(`${hh}:${mm}`);
     }
 
-    // ตัดเวลาที่ถูกจองแล้ว
     const booked = new Set(
       appointments
         .filter((a) => a.date === ymd && a.status === "scheduled")

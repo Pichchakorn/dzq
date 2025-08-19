@@ -1,5 +1,5 @@
-// PatientDashboard.tsx
-import React, { useRef, useState } from "react";
+// src/components/PatientDashboard.tsx
+import React, { useRef, useState, useMemo } from "react";
 import {
   Calendar,
   Clock,
@@ -18,10 +18,37 @@ import { useAppointments } from "../contexts/AppointmentContext";
 import { storage } from "../lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { toast } from "sonner";
+import type { Appointment } from "../types";
 
 interface PatientDashboardProps {
   onNavigate: (page: string) => void;
 }
+
+type Status = Appointment["status"];
+
+// --- helpers ------------------------------------------------
+const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+const key = (d: string, t: string) => `${d} ${t}`;
+const cmpAsc = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const cmpDesc = (a: string, b: string) => (a > b ? -1 : a < b ? 1 : 0);
+
+function isPast(dateYMD: string, timeHM: string) {
+  const nowYMD = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+  const nowHM = new Date().toTimeString().slice(0, 5);  // "HH:mm"
+  return dateYMD < nowYMD || (dateYMD === nowYMD && timeHM < nowHM);
+}
+
+const statusLabel = (s: Status) =>
+  s === "completed" ? "เสร็จสิ้น" :
+  s === "missed"    ? "ขาดนัด"   :
+  s === "cancelled" ? "ยกเลิก"   : "นัดหมาย";
+
+const statusVariant = (s: Status) =>
+  s === "completed" ? "default" :
+  s === "missed"    ? "destructive" :
+  s === "cancelled" ? "destructive" : "secondary";
+
+// ------------------------------------------------------------
 
 export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
   const { user, updateUserProfile } = useAuth();
@@ -31,25 +58,27 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
 
   const pid = user?.id ?? "";
 
-  // helper สำหรับเปรียบเทียบแบบไม่พึ่ง timezone
-  const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
-  const key = (d: string, t: string) => `${d} ${t}`;
-  const cmpAsc = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-  const cmpDesc = (a: string, b: string) => (a > b ? -1 : a < b ? 1 : 0);
+  // นัดของผู้ใช้คนนี้
+  const userAppointments = useMemo(
+    () => appointments.filter(a => a.patientId === pid),
+    [appointments, pid]
+  );
 
-  const userAppointments = appointments.filter((app) => app.patientId === pid);
-
-  // คิวล่วงหน้า (ตั้งแต่วันนี้และเวลายังไม่ผ่าน) เรียงจากใกล้สุดไปไกลสุด
-    const upcomingAppointments = userAppointments
-    .filter((app) => app.status === "scheduled" && app.date >= todayStr)
-    .sort((a, b) => (`${a.date} ${a.time}` > `${b.date} ${b.time}` ? 1 : -1));
-
+  // นัดล่วงหน้า (ยัง scheduled และไม่ผ่านเวลา)
+  const upcomingAppointments = useMemo(
+    () =>
+      userAppointments
+        .filter(a => a.status === "scheduled" && !isPast(a.date, a.time))
+        .sort((a, b) => cmpAsc(key(a.date, a.time), key(b.date, b.time))),
+    [userAppointments]
+  );
   const nextAppointment = upcomingAppointments[0];
 
-  // นัดหมายล่าสุด (ทุกสถานะ) เรียงจากใหม่สุดไปเก่าสุด แล้วหยิบ 3 อันดับแรก
-  const recentAppointments = [...userAppointments]
-    .sort((a, b) => cmpDesc(key(a.date, a.time), key(b.date, b.time)))
-    .slice(0, 3);
+  // นัดล่าสุด (ทุกสถานะ) เอา 3 รายการล่าสุด
+  const recentAppointments = useMemo(
+    () => [...userAppointments].sort((a, b) => cmpDesc(key(a.date, a.time), key(b.date, b.time))).slice(0, 3),
+    [userAppointments]
+  );
 
   const onPickFile = () => fileInputRef.current?.click();
 
@@ -73,16 +102,9 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
     }
   };
 
-  const statusLabel = (s: "scheduled" | "completed" | "cancelled") =>
-  s === "completed" ? "เสร็จสิ้น" : s === "cancelled" ? "ยกเลิก" : "นัดหมาย";
-
-  const statusVariant = (s: "scheduled" | "completed" | "cancelled") =>
-  s === "completed" ? "default" : s === "cancelled" ? "destructive" : "secondary";
-
-
   return (
     <div className="space-y-6">
-      {/* Welcome Section + Avatar */}
+      {/* Welcome + Avatar */}
       <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-6 rounded-lg flex items-center justify-between">
         <div>
           <h1 className="text-2xl mb-2">สวัสดี, {user?.name ?? "ผู้ใช้งาน"}</h1>
@@ -198,38 +220,24 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
         <CardHeader>
           <CardTitle>นัดหมายล่าสุด</CardTitle>
           <CardDescription>ประวัติการเข้ารับการรักษา</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {recentAppointments.map((appointment) => {
-              const statusLabel = (s: string) =>
-                s === "completed" ? "เสร็จสิ้น" : s === "cancelled" ? "ยกเลิก" : "นัดหมาย";
-
-              const statusVariant = (s: string) =>
-                s === "completed" ? "default" : s === "cancelled" ? "destructive" : "secondary";
-
-              return (
-                <div
-                  key={appointment.id}
-                  className="flex items-center justify-between py-3 border-b last:border-b-0"
-                >
-                  <div>
-                    <p className="font-medium">{appointment.treatmentType}</p>
-                    <p className="text-sm text-gray-600">
-                      {new Date(`${appointment.date}T00:00:00`).toLocaleDateString("th-TH")} -{" "}
-                      {appointment.time} น.
-                    </p>
-                  </div>
-                  <Badge variant={statusVariant(appointment.status)}>
-                    {statusLabel(appointment.status)}
-                  </Badge>
-                </div>
-              );
-            })}
-            {userAppointments.length === 0 && (
-              <p className="text-center text-gray-500 py-8">ยังไม่มีประวัติการรักษา</p>
-            )}
-          </CardContent>
-          </Card>
-          </div>
-        );
+        </CardHeader>
+        <CardContent>
+          {recentAppointments.map((a) => (
+            <div key={a.id} className="flex items-center justify-between py-3 border-b last:border-b-0">
+              <div>
+                <p className="font-medium">{a.treatmentType}</p>
+                <p className="text-sm text-gray-600">
+                  {new Date(`${a.date}T00:00:00`).toLocaleDateString("th-TH")} - {a.time} น.
+                </p>
+              </div>
+              <Badge variant={statusVariant(a.status)}>{statusLabel(a.status)}</Badge>
+            </div>
+          ))}
+          {userAppointments.length === 0 && (
+            <p className="text-center text-gray-500 py-8">ยังไม่มีประวัติการรักษา</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
 }

@@ -5,8 +5,8 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
-  updateProfile,
   User as FbUser,
+  updateProfile,
 } from "firebase/auth";
 import { auth, db } from "../lib/firebase";
 import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
@@ -40,22 +40,17 @@ type Ctx = {
     (payload: RegisterObj): Promise<boolean>;
   };
   logout: () => Promise<void>;
-  updateUserProfile: (patch: Partial<AppUser>) => Promise<void>;
+  updateUserProfile: (patch: Partial<{ name: string; photoURL: string }>) => Promise<void>;
 };
 
 const AuthCtx = createContext<Ctx>(null as any);
 export const useAuth = () => useContext(AuthCtx);
 
-/** ---- Admin whitelist (comma separated) from .env ----
- *  VITE_ADMIN_EMAILS=admin@your.com,owner@domain.com
- */
-// อ่านได้ทั้งสอง prefix
-/// <reference types="vite/client" />
-// --- whitelist จาก .env (รองรับทั้ง Vite และ CRA) ---
-// --- ไวท์ลิสต์อีเมลแอดมินจาก .env ---
+// --- ไวท์ลิสต์อีเมลแอดมินจาก .env (รองรับทั้ง Vite และ CRA) ---
 const ADMIN_EMAILS_RAW =
   (import.meta as any).env?.VITE_ADMIN_EMAILS ||
-  (process.env as any).REACT_APP_ADMIN_EMAIL || "";   // รองรับ CRA
+  (process.env as any).REACT_APP_ADMIN_EMAIL ||
+  "";
 
 const ADMIN_EMAILS = ADMIN_EMAILS_RAW
   .split(",")
@@ -92,8 +87,6 @@ async function loadUser(fb: FbUser): Promise<AppUser> {
     role: inWhitelist ? "admin" : (data.role as Role) || "patient",
   };
 }
-
-
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);

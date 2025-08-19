@@ -8,6 +8,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { useAuth } from "../contexts/AuthContext";
 import { useAppointments } from "../contexts/AppointmentContext";
+import type { Appointment } from "../types";
+
+
+type Status = Appointment["status"];
+
 
 export function DoctorDashboard() {
   const { user, isAdmin, isLoading } = useAuth();
@@ -33,11 +38,15 @@ export function DoctorDashboard() {
   }
 
   // === helpers สำหรับ UI ===
-  const statusLabel = (s: "scheduled" | "completed" | "cancelled") =>
-    s === "completed" ? "เสร็จสิ้น" : s === "cancelled" ? "ยกเลิก" : "นัดหมาย";
+  const statusLabel = (s: Status) =>
+    s === "completed" ? "เสร็จสิ้น" :
+    s === "missed"    ? "ขาดนัด"   :
+    s === "cancelled" ? "ยกเลิก"   : "นัดหมาย";
 
-  const statusVariant = (s: "scheduled" | "completed" | "cancelled") =>
-    s === "completed" ? "default" : s === "cancelled" ? "destructive" : "secondary";
+  const statusVariant = (s: Status) =>
+    s === "completed" ? "default" :
+    s === "missed"    ? "destructive" :
+    s === "cancelled" ? "destructive" : "secondary";
 
   // === datasets ===
   const todayAppointments = appointments

@@ -4,7 +4,7 @@
 export type UserRole = 'patient' | 'doctor' | 'staff';
 
 /** Appointment status types */
-export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled';
+export type AppointmentStatus = "scheduled" | "completed" | "cancelled" | "missed";
 
 /** User data structure */
 export interface User {
@@ -19,16 +19,16 @@ export interface User {
 }
 
 /** Appointment data structure */
-export interface Appointment {
-  readonly id: string;
-  patientId: string;         // อ้างถึง User.id
+export type Appointment = {
+  id: string;
+  patientId: string;
   patientName: string;
-  date: string;              // 'YYYY-MM-DD' (หรือ Date ถ้าทำงานกับ Timestamp)
-  time: string;              // 'HH:mm'
-  treatmentType: string;     // อ้างถึง TreatmentType.id หรือชื่อ
-  status: AppointmentStatus;
-  notes?: string;
-}
+  treatmentType: string;
+  date: string;   // YYYY-MM-DD
+  time: string;   // HH:mm
+  status: "scheduled" | "completed" | "cancelled" | "missed";
+  createdAt: string;
+};
 
 /** Treatment type information */
 export type Treatment = {
