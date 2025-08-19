@@ -3,7 +3,8 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
-
+import "./index.css"; // หรือ "./styles/globals.css" แล้วแต่ที่คุณวาง
+import "../src/styles/globals.css"; // นำเข้าไฟล์ CSS ทั่วไป
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
