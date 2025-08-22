@@ -22,11 +22,15 @@ import { useAuth } from "./AuthContext";
 import type { Appointment } from "../types";
 
 /* ---------------- Types ---------------- */
+
+// วันหยุดให้เป็นอ็อบเจ็กต์เสมอ
+export type Holiday = { date: string; name?: string };
+
 export type ClinicSettings = {
   workingHours: { start: string; end: string };
   breakTime: { start: string; end: string };
   slotDuration: number;
-  holidays: string[];
+  holidays: Holiday[];      // ✅ ใช้ Holiday[] เพียงแบบเดียว
 };
 
 export type TreatmentType = { id: string; name: string; duration: number; price: number };
@@ -37,11 +41,34 @@ export type LockedSlot = {
   reason?: string;
 };
 
+// ดัชนีสำหรับกันช่องเวลาที่ถูกจองไปแล้ว (อ่านได้สาธารณะ, ไม่มี PII)
+export type BookedSlot = {
+  date: string;     // YYYY-MM-DD
+  time: string;     // HH:mm
+  patientId: string;
+  createdAt?: any;  // serverTimestamp
+};
+
+// แปลงข้อมูลวันหยุดจาก Firestore ให้เป็น Holiday[]
+const normalizeHolidays = (raw: any): Holiday[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((x) =>
+      typeof x === "string"
+        ? ({ date: x } as Holiday)
+        : x && typeof x.date === "string"
+        ? ({ date: x.date, name: typeof x.name === "string" ? x.name : undefined } as Holiday)
+        : null
+    )
+    .filter(Boolean) as Holiday[];
+};
+
 type Ctx = {
   appointments: Appointment[];
   treatmentTypes: TreatmentType[];
   clinicSettings: ClinicSettings;
   lockedSlots: LockedSlot[];
+  bookedSlots: BookedSlot[];
 
   createAppointment: (
     a: Omit<Appointment, "id" | "createdAt" | "status"> & { status?: "scheduled" }
@@ -55,7 +82,6 @@ type Ctx = {
   updateClinicSettings: (s: Partial<ClinicSettings>) => Promise<void>;
   setTreatmentTypes: (list: TreatmentType[]) => Promise<void>;
 
-  // สำหรับแอดมิน
   lockSlot: (date: string, time: string, reason?: string) => Promise<void>;
   unlockSlot: (date: string, time: string) => Promise<void>;
 };
@@ -78,16 +104,17 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
   const [clinicSettings, setClinicSettings] = useState<ClinicSettings>(DEFAULT_SETTINGS);
   const [treatmentTypes, setTT] = useState<TreatmentType[]>([]);
   const [lockedSlots, setLockedSlots] = useState<LockedSlot[]>([]);
+  const [bookedSlots, setBookedSlots] = useState<BookedSlot[]>([]);
 
-  /* Stream appointments */
+  /* Stream appointments (เฉพาะของตนเอง เว้นแต่อยู่ในโหมดแอดมิน) */
   useEffect(() => {
     if (!user) return;
     const col = collection(db, "appointments");
-    const q = isAdmin
+    const qy = isAdmin
       ? query(col, orderBy("date"), orderBy("time"))
       : query(col, where("patientId", "==", user.id), orderBy("date"), orderBy("time"));
 
-    return onSnapshot(q, (snap) => {
+    return onSnapshot(qy, (snap) => {
       const list: Appointment[] = snap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as any),
@@ -101,9 +128,13 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     (async () => {
       const s = await getDoc(doc(db, "clinicSettings", "singleton"));
       if (s.exists()) {
-        setClinicSettings({ ...DEFAULT_SETTINGS, ...(s.data() as Partial<ClinicSettings>) });
+        const data = s.data() as Partial<ClinicSettings> & { holidays?: any };
+        setClinicSettings({
+          ...DEFAULT_SETTINGS,
+          ...data,
+          holidays: normalizeHolidays(data.holidays),
+        });
       }
-
       const t = await getDocs(collection(db, "treatmentTypes"));
       setTT(
         t.docs.map(
@@ -117,12 +148,21 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     })();
   }, []);
 
-  /* Stream locked slots */
+  /* Stream locked slots (แอดมินล็อกเวลา) */
   useEffect(() => {
     const col = collection(db, "lockedSlots");
     return onSnapshot(col, (snap) => {
       const list: LockedSlot[] = snap.docs.map((d) => d.data() as LockedSlot);
       setLockedSlots(list);
+    });
+  }, []);
+
+  /* Stream booked slots (กันชนเวลาที่ถูกจองแล้ว) */
+  useEffect(() => {
+    const col = collection(db, "bookedSlots");
+    return onSnapshot(col, (snap) => {
+      const list: BookedSlot[] = snap.docs.map((d) => d.data() as BookedSlot);
+      setBookedSlots(list);
     });
   }, []);
 
@@ -138,50 +178,81 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       createdAt: new Date().toISOString(),
     };
 
-    await runTransaction(db, async (tx) => {
-      // กันจองซ้ำ
-      const col = collection(db, "appointments");
-      const q = query(
-        col,
-        where("date", "==", payload.date),
-        where("time", "==", payload.time),
-        where("status", "==", "scheduled")
-      );
-      const snap = await getDocs(q);
-      if (!snap.empty) throw new Error("ช่วงเวลานี้ถูกจองแล้ว");
+    const slotKey = `${payload.date}_${payload.time}`;
+    const lockedRef = doc(db, "lockedSlots", slotKey);
+    const bookedRef = doc(db, "bookedSlots", slotKey);
+    const apptRef = doc(collection(db, "appointments"));
 
-      // กันเวลาที่ล็อคแล้ว
-      const lockedRef = doc(db, "lockedSlots", `${payload.date}_${payload.time}`);
+    await runTransaction(db, async (tx) => {
+      // ห้ามชนกับช่วงที่แอดมินล็อคไว้
       const lockedSnap = await tx.get(lockedRef);
       if (lockedSnap.exists()) throw new Error("ช่วงเวลานี้ถูกล็อคแล้ว");
 
-      const ref = doc(col);
-      tx.set(ref, { ...payload, createdAtServer: serverTimestamp() });
+      // ห้ามชนกับการจองก่อนหน้า
+      const bookedSnap = await tx.get(bookedRef);
+      if (bookedSnap.exists()) throw new Error("ช่วงเวลานี้ถูกจองแล้ว");
+
+      // จองดัชนีช่องเวลา (ไม่มี PII)
+      tx.set(bookedRef, {
+        date: payload.date,
+        time: payload.time,
+        patientId: payload.patientId,
+        createdAt: serverTimestamp(),
+      } as BookedSlot);
+
+      // สร้างใบนัดจริง
+      tx.set(apptRef, { ...payload, createdAtServer: serverTimestamp() });
     });
 
     return "ok";
   };
 
   const updateAppointment: Ctx["updateAppointment"] = async (id, patch) => {
+    // ถ้ายกเลิก ให้ลบดัชนีช่องเวลาเพื่อคืนสิทธิ์ให้คนอื่นจอง
+    if (patch.status === "cancelled") {
+      const apptRef = doc(db, "appointments", id);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(apptRef);
+        if (!snap.exists()) return;
+        const prev = snap.data() as Appointment;
+        const slotKey = `${prev.date}_${prev.time}`;
+        const bookedRef = doc(db, "bookedSlots", slotKey);
+
+        tx.update(apptRef, patch as any);
+        tx.delete(bookedRef);
+      });
+      return;
+    }
+
     await updateDoc(doc(db, "appointments", id), patch as any);
   };
 
   const clearQueue: Ctx["clearQueue"] = async (ymd, to, reason) => {
-    const q = query(
+    const qy = query(
       collection(db, "appointments"),
       where("date", "==", ymd),
       where("status", "==", "scheduled")
     );
-    const snap = await getDocs(q);
-    const jobs = snap.docs.map((d) =>
-      updateDoc(
-        d.ref,
-        to === "cancelled"
-          ? { status: "cancelled", cancelReason: reason || "ยกเลิกโดยคลินิก" }
-          : { status: "completed" }
-      )
-    );
-    await Promise.all(jobs);
+    const snap = await getDocs(qy);
+
+    if (to === "cancelled") {
+      // ยกเลิกทั้งหมด + ลบ bookedSlots ของวันนั้น
+      await Promise.all(
+        snap.docs.map(async (d) => {
+          const a = d.data() as Appointment;
+          const slotKey = `${a.date}_${a.time}`;
+          const bookedRef = doc(db, "bookedSlots", slotKey);
+          await Promise.all([
+            updateDoc(d.ref, { status: "cancelled", cancelReason: reason || "ยกเลิกโดยคลินิก" }),
+            deleteDoc(bookedRef),
+          ]);
+        })
+      );
+    } else {
+      // completed อย่างเดียว ไม่แตะ bookedSlots
+      await Promise.all(snap.docs.map((d) => updateDoc(d.ref, { status: "completed" })));
+    }
+
     return snap.size;
   };
 
@@ -196,8 +267,14 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
   };
 
   const updateClinicSettings: Ctx["updateClinicSettings"] = async (s) => {
-    await setDoc(doc(db, "clinicSettings", "singleton"), s, { merge: true });
-    setClinicSettings((prev) => ({ ...prev, ...s }));
+    // รวมกับค่าเดิม + normalize holidays ก่อนเขียนกลับ
+    const merged: ClinicSettings = {
+      ...clinicSettings,
+      ...s,
+      holidays: normalizeHolidays((s as any)?.holidays ?? clinicSettings.holidays),
+    };
+    await setDoc(doc(db, "clinicSettings", "singleton"), merged, { merge: true });
+    setClinicSettings(merged);
   };
 
   const setTreatmentTypes: Ctx["setTreatmentTypes"] = async (list) => {
@@ -215,7 +292,7 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     setTT(list.map((t) => ({ ...t, id: t.id || "" })));
   };
 
-  /* Lock/Unlock slot */
+  /* Lock/Unlock slot (แอดมิน) */
   const lockSlot: Ctx["lockSlot"] = async (date, time, reason) => {
     await setDoc(doc(db, "lockedSlots", `${date}_${time}`), { date, time, reason });
   };
@@ -226,7 +303,9 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
 
   /* Helpers */
   const getAvailableSlots: Ctx["getAvailableSlots"] = (ymd) => {
-    if (clinicSettings.holidays.includes(ymd)) return [];
+    // ปิดทั้งวันถ้าเป็นวันหยุด (หลัง normalize แล้ว)
+    const holidaySet = new Set((clinicSettings.holidays ?? []).map((h) => h.date));
+    if (holidaySet.has(ymd)) return [];
 
     const toMin = (t: string) => {
       const [h, m] = t.split(":").map(Number);
@@ -261,6 +340,7 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       treatmentTypes,
       clinicSettings,
       lockedSlots,
+      bookedSlots,
       createAppointment,
       updateAppointment,
       clearQueue,
@@ -271,7 +351,7 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       lockSlot,
       unlockSlot,
     }),
-    [appointments, treatmentTypes, clinicSettings, lockedSlots]
+    [appointments, treatmentTypes, clinicSettings, lockedSlots, bookedSlots]
   );
 
   return <AppointmentsCtx.Provider value={value}>{children}</AppointmentsCtx.Provider>;

@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+// src/components/SettingsPage.tsx
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Clock, Calendar, DollarSign, Building, Save, Plus, Trash2, Edit,
 } from "lucide-react";
@@ -14,20 +15,24 @@ import { toast } from "sonner";
 
 /* ---------- Types ---------- */
 type WorkingHours = { start: string; end: string };
-type BreakTime = { start: string; end: string };
-type Treatment = { id: string; name: string; duration: number; price: number };
-type NewTreatment = Omit<Treatment, "id">;
-type ClinicInfo = { name: string; address: string; phone: string; email: string };
+type BreakTime    = { start: string; end: string };
+
+/** ✅ ทำให้ duration/price ไม่บังคับด้วยการทำให้เป็น optional */
+type TreatmentRow = { id: string; name: string; duration?: number | null; price?: number | null };
+type NewTreatment = Omit<TreatmentRow, "id">;
+
+type ClinicInfo   = { name: string; address: string; phone: string; email: string };
+type Holiday = { date: string; name: string };
 
 type ClinicSettings = {
   workingHours: WorkingHours;
   breakTime: BreakTime;
   slotDuration: number;
-  holidays: string[];
+  holidays: Holiday[];
   clinicInfo?: ClinicInfo;
 };
 
-/* ---------- Safe defaults (กัน undefined) ---------- */
+/* ---------- Safe defaults ---------- */
 const DEFAULT_SETTINGS: ClinicSettings = {
   workingHours: { start: "09:00", end: "17:00" },
   breakTime: { start: "12:00", end: "13:00" },
@@ -42,11 +47,9 @@ const DEFAULT_SETTINGS: ClinicSettings = {
 };
 
 export function SettingsPage() {
-  // จาก context (ถ้าไม่มี ให้ fallback เป็นค่า default)
   const {
     treatmentTypes,
     clinicSettings,
-    // ฟังก์ชันต่อไปนี้ “อาจ” ยังไม่มีในโปรเจกต์คุณ ไม่เป็นไร เราจะเช็คก่อนเรียก
     updateClinicSettings,
     setTreatmentTypes,
   } = useAppointments() as any;
@@ -56,36 +59,64 @@ export function SettingsPage() {
     [clinicSettings]
   );
 
-  /* ---------- States ---------- */
+  /* ---------- Local states ---------- */
   // Working hours
   const [workingHours, setWorkingHours] = useState<WorkingHours>(initialSettings.workingHours);
-  const [breakTime, setBreakTime] = useState<BreakTime>(initialSettings.breakTime);
+  const [breakTime, setBreakTime]       = useState<BreakTime>(initialSettings.breakTime);
   const [slotDuration, setSlotDuration] = useState<number>(initialSettings.slotDuration);
 
   // Holidays
-  const [holidays, setHolidays] = useState<string[]>(initialSettings.holidays);
-  const [newHoliday, setNewHoliday] = useState<string>("");
-  const [holidayName, setHolidayName] = useState<string>(""); // ตอนนี้ใช้ตรวจความครบถ้วนเฉย ๆ
+  const [holidays, setHolidays]         = useState<Holiday[]>(initialSettings.holidays);
+  const [newHoliday, setNewHoliday]     = useState<string>("");
+  const [newHolidayName, setNewHolidayName] = useState<string>("");
 
-  // Treatments
-  const [treatments, setTreatments] = useState<Treatment[]>(
-    (treatmentTypes as Treatment[]) ?? []
+  // Treatments (ทำให้ duration/price optional)
+  const [treatments, setTreatments] = useState<TreatmentRow[]>(
+    ((treatmentTypes as any[]) ?? []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      duration: typeof t.duration === "number" ? t.duration : null,
+      price: typeof t.price === "number" ? t.price : null,
+    }))
   );
-  const [newTreatment, setNewTreatment] = useState<NewTreatment>({
-    name: "",
-    duration: 30,
-    price: 0,
-  });
-  const [editingTreatment, setEditingTreatment] = useState<Treatment | null>(null);
+
+  // สำหรับช่องกรอก (รองรับค่าว่าง)
+  const [newTreatment, setNewTreatment] = useState<NewTreatment>({ name: "", duration: null, price: null });
+
+  // แก้ไขรายการ
+  const [editingTreatment, setEditingTreatment] = useState<TreatmentRow | null>(null);
 
   // Clinic info
   const [clinicInfo, setClinicInfo] = useState<ClinicInfo>(
     initialSettings.clinicInfo ?? DEFAULT_SETTINGS.clinicInfo!
   );
 
-  /* ---------- Handlers: Working hours ---------- */
+  // Edit holiday dialog
+  const [editingHoliday, setEditingHoliday] = useState<Holiday | null>(null);
+  const [editingHolidayName, setEditingHolidayName] = useState<string>("");
+
+  /* ---------- Sync จาก Context -> Local state ---------- */
+  useEffect(() => {
+    if (!clinicSettings) return;
+    setWorkingHours(clinicSettings.workingHours ?? DEFAULT_SETTINGS.workingHours);
+    setBreakTime(clinicSettings.breakTime ?? DEFAULT_SETTINGS.breakTime);
+    setSlotDuration(clinicSettings.slotDuration ?? DEFAULT_SETTINGS.slotDuration);
+    setHolidays(clinicSettings.holidays ?? []);
+    setClinicInfo(clinicSettings.clinicInfo ?? DEFAULT_SETTINGS.clinicInfo!);
+  }, [clinicSettings]);
+
+  useEffect(() => {
+    setTreatments(((treatmentTypes as any[]) ?? []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      duration: typeof t.duration === "number" ? t.duration : null,
+      price: typeof t.price === "number" ? t.price : null,
+    })));
+  }, [treatmentTypes]);
+
+  /* ---------- Save working hours ---------- */
   const handleSaveWorkingHours = async () => {
-    const next: ClinicSettings = {
+    const next: Partial<ClinicSettings> = {
       workingHours,
       breakTime,
       slotDuration,
@@ -103,45 +134,84 @@ export function SettingsPage() {
     }
   };
 
-  /* ---------- Handlers: Holidays ---------- */
-  const handleAddHoliday = () => {
-    if (!newHoliday || !holidayName) {
-      toast.error("กรุณากรอกวันที่และชื่อวันหยุด");
+  /* ---------- Holidays ---------- */
+  const handleAddHoliday = async () => {
+    if (!newHoliday) {
+      toast.error("กรุณาเลือกวันที่");
       return;
     }
-    if (holidays.includes(newHoliday)) {
+    if (holidays.some((h) => h.date === newHoliday)) {
       toast.error("มีวันหยุดนี้อยู่แล้ว");
       return;
     }
-    setHolidays((prev) => [...prev, newHoliday]);
-    setNewHoliday("");
-    setHolidayName("");
-    toast.success("เพิ่มวันหยุดเรียบร้อย");
+
+    const entry: Holiday = { date: newHoliday, name: newHolidayName || "วันหยุด" };
+    const next = [...holidays, entry].sort((a, b) => a.date.localeCompare(b.date));
+
+    try {
+      await updateClinicSettings({ holidays: next });
+      setHolidays(next);
+      setNewHoliday("");
+      setNewHolidayName("");
+      toast.success("เพิ่มวันหยุดเรียบร้อย");
+    } catch (e) {
+      console.error(e);
+      toast.error("บันทึกไม่สำเร็จ");
+    }
   };
 
-  const handleRemoveHoliday = (holidayDate: string) => {
-    setHolidays((prev) => prev.filter((h) => h !== holidayDate));
-    toast.success("ลบวันหยุดเรียบร้อย");
+  const handleRemoveHoliday = async (date: string) => {
+    const next = holidays.filter((h) => h.date !== date);
+    try {
+      await updateClinicSettings({ holidays: next });
+      setHolidays(next);
+      toast.success("ลบวันหยุดเรียบร้อย");
+    } catch (e) {
+      console.error(e);
+      toast.error("บันทึกไม่สำเร็จ");
+    }
   };
 
-  /* ---------- Handlers: Treatments ---------- */
+  const handleRenameHoliday = async () => {
+    if (!editingHoliday) return;
+    const next = holidays.map((h) =>
+      h.date === editingHoliday.date ? { ...h, name: editingHolidayName.trim() || "วันหยุด" } : h
+    );
+    try {
+      await updateClinicSettings({ holidays: next });
+      setHolidays(next);
+      setEditingHoliday(null);
+      toast.success("อัปเดตชื่อวันหยุดเรียบร้อย");
+    } catch (e) {
+      console.error(e);
+      toast.error("บันทึกไม่สำเร็จ");
+    }
+  };
+
+  /* ---------- Treatments ---------- */
+  const numOrNull = (v: string) => (v.trim() === "" ? null : Number(v));
+
   const handleAddTreatment = async () => {
-    if (!newTreatment.name || newTreatment.price < 0) {
-      toast.error("กรุณากรอกข้อมูลให้ครบถ้วน");
+    if (!newTreatment.name.trim()) {
+      toast.error("กรุณากรอกชื่อการรักษา");
       return;
     }
-    const treatment: Treatment = {
+
+    const treatment: TreatmentRow = {
       id: crypto?.randomUUID?.() ?? Date.now().toString(),
-      ...newTreatment,
+      name: newTreatment.name.trim(),
+      duration: newTreatment.duration ?? null,
+      price: newTreatment.price ?? null,
     };
+
     const next = [...treatments, treatment];
     setTreatments(next);
-    setNewTreatment({ name: "", duration: 30, price: 0 });
+    setNewTreatment({ name: "", duration: null, price: null });
 
-    // บันทึกกลับ context ถ้ามี
     if (typeof setTreatmentTypes === "function") {
       try {
-        await setTreatmentTypes(next);
+        // Firestore จะไม่เขียนฟิลด์ที่เป็น undefined (ดีต่อเคสยังไม่กำหนด)
+        await setTreatmentTypes(next as any);
       } catch (e) {
         console.error(e);
       }
@@ -151,13 +221,24 @@ export function SettingsPage() {
 
   const handleUpdateTreatment = async () => {
     if (!editingTreatment) return;
-    const next = treatments.map((t) => (t.id === editingTreatment.id ? editingTreatment : t));
+
+    const next = treatments.map((t) =>
+      t.id === editingTreatment.id
+        ? {
+            ...t,
+            name: editingTreatment.name.trim() || t.name,
+            duration: editingTreatment.duration ?? null,
+            price: editingTreatment.price ?? null,
+          }
+        : t
+    );
+
     setTreatments(next);
     setEditingTreatment(null);
 
     if (typeof setTreatmentTypes === "function") {
       try {
-        await setTreatmentTypes(next);
+        await setTreatmentTypes(next as any);
       } catch (e) {
         console.error(e);
       }
@@ -171,7 +252,7 @@ export function SettingsPage() {
 
     if (typeof setTreatmentTypes === "function") {
       try {
-        await setTreatmentTypes(next);
+        await setTreatmentTypes(next as any);
       } catch (e) {
         console.error(e);
       }
@@ -179,9 +260,9 @@ export function SettingsPage() {
     toast.success("ลบประเภทการรักษาเรียบร้อย");
   };
 
-  /* ---------- Handlers: Clinic info ---------- */
+  /* ---------- Save clinic info ---------- */
   const handleSaveClinicInfo = async () => {
-    const next: ClinicSettings = {
+    const next: Partial<ClinicSettings> = {
       workingHours,
       breakTime,
       slotDuration,
@@ -302,7 +383,7 @@ export function SettingsPage() {
                 <Calendar className="h-5 w-5 mr-2" />
                 จัดการวันหยุด
               </CardTitle>
-              <CardDescription>เพิ่ม/ลบ วันหยุดของคลินิก</CardDescription>
+              <CardDescription>เพิ่ม / ลบ / แก้ไข วันหยุดของคลินิก</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="flex gap-4">
@@ -320,8 +401,8 @@ export function SettingsPage() {
                   <Input
                     id="holiday-name"
                     placeholder="เช่น วันปีใหม่"
-                    value={holidayName}
-                    onChange={(e) => setHolidayName(e.target.value)}
+                    value={newHolidayName}
+                    onChange={(e) => setNewHolidayName(e.target.value)}
                   />
                 </div>
                 <div className="flex items-end">
@@ -339,27 +420,59 @@ export function SettingsPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>วันที่</TableHead>
-                        <TableHead>จัดการ</TableHead>
+                        <TableHead>ชื่อวันหยุด</TableHead>
+                        <TableHead className="text-right">จัดการ</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {holidays.map((holiday) => (
-                        <TableRow key={holiday}>
+                      {holidays.map((h) => (
+                        <TableRow key={h.date}>
                           <TableCell>
-                            {new Date(holiday).toLocaleDateString("th-TH", {
-                              year: "numeric",
-                              month: "long",
-                              day: "numeric",
+                            {new Date(h.date + "T00:00:00").toLocaleDateString("th-TH", {
+                              year: "numeric", month: "long", day: "numeric",
                             })}
                           </TableCell>
-                          <TableCell>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => handleRemoveHoliday(holiday)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                          <TableCell>{h.name}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Dialog
+                                onOpenChange={(open) => {
+                                  if (open) {
+                                    setEditingHoliday(h);
+                                    setEditingHolidayName(h.name);
+                                  } else {
+                                    setEditingHoliday(null);
+                                  }
+                                }}
+                              >
+                                <DialogTrigger asChild>
+                                  <Button size="sm" variant="outline">
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                </DialogTrigger>
+                                <DialogContent>
+                                  <DialogHeader>
+                                    <DialogTitle>แก้ไขชื่อวันหยุด</DialogTitle>
+                                    <DialogDescription>
+                                      ระบุชื่อวันหยุดสำหรับวันที่{" "}
+                                      {new Date(h.date + "T00:00:00").toLocaleDateString("th-TH")}
+                                    </DialogDescription>
+                                  </DialogHeader>
+                                  <div className="space-y-2">
+                                    <Label>ชื่อวันหยุด</Label>
+                                    <Input
+                                      value={editingHolidayName}
+                                      onChange={(e) => setEditingHolidayName(e.target.value)}
+                                    />
+                                    <Button onClick={handleRenameHoliday} className="w-full">บันทึก</Button>
+                                  </div>
+                                </DialogContent>
+                              </Dialog>
+
+                              <Button size="sm" variant="destructive" onClick={() => handleRemoveHoliday(h.date)}>
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -397,10 +510,16 @@ export function SettingsPage() {
                   <Label>ระยะเวลา (นาที)</Label>
                   <Input
                     type="number"
-                    min={15}
-                    step={15}
-                    value={newTreatment.duration}
-                    onChange={(e) => setNewTreatment((p) => ({ ...p, duration: Number(e.target.value) }))}
+                    min={0}
+                    step={5}
+                    value={newTreatment.duration ?? ""}
+                    onChange={(e) =>
+                      setNewTreatment((p) => ({
+                        ...p,
+                        duration: e.target.value.trim() === "" ? null : Number(e.target.value),
+                      }))
+                    }
+                    placeholder="ระบุภายหลังได้"
                   />
                 </div>
                 <div>
@@ -408,8 +527,14 @@ export function SettingsPage() {
                   <Input
                     type="number"
                     min={0}
-                    value={newTreatment.price}
-                    onChange={(e) => setNewTreatment((p) => ({ ...p, price: Number(e.target.value) }))}
+                    value={newTreatment.price ?? ""}
+                    onChange={(e) =>
+                      setNewTreatment((p) => ({
+                        ...p,
+                        price: e.target.value.trim() === "" ? null : Number(e.target.value),
+                      }))
+                    }
+                    placeholder="ระบุภายหลังได้"
                   />
                 </div>
                 <div className="flex items-end">
@@ -433,11 +558,15 @@ export function SettingsPage() {
                   {treatments.map((treatment) => (
                     <TableRow key={treatment.id}>
                       <TableCell>{treatment.name}</TableCell>
-                      <TableCell>{treatment.duration} นาที</TableCell>
-                      <TableCell>฿{treatment.price}</TableCell>
+                      <TableCell>
+                        {typeof treatment.duration === "number" ? `${treatment.duration} นาที` : "-"}
+                      </TableCell>
+                      <TableCell>
+                        {typeof treatment.price === "number" ? `฿${treatment.price}` : "-"}
+                      </TableCell>
                       <TableCell>
                         <div className="flex space-x-2">
-                          <Dialog>
+                          <Dialog onOpenChange={(open) => !open && setEditingTreatment(null)}>
                             <DialogTrigger asChild>
                               <Button
                                 size="sm"
@@ -469,24 +598,38 @@ export function SettingsPage() {
                                     <Label>ระยะเวลา (นาที)</Label>
                                     <Input
                                       type="number"
-                                      value={editingTreatment.duration}
+                                      value={editingTreatment.duration ?? ""}
                                       onChange={(e) =>
                                         setEditingTreatment((prev) =>
-                                          prev ? { ...prev, duration: Number(e.target.value) } : prev
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                duration:
+                                                  e.target.value.trim() === "" ? null : Number(e.target.value),
+                                              }
+                                            : prev
                                         )
                                       }
+                                      placeholder="ปล่อยว่างได้"
                                     />
                                   </div>
                                   <div>
                                     <Label>ราคา (บาท)</Label>
                                     <Input
                                       type="number"
-                                      value={editingTreatment.price}
+                                      value={editingTreatment.price ?? ""}
                                       onChange={(e) =>
                                         setEditingTreatment((prev) =>
-                                          prev ? { ...prev, price: Number(e.target.value) } : prev
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                price:
+                                                  e.target.value.trim() === "" ? null : Number(e.target.value),
+                                              }
+                                            : prev
                                         )
                                       }
+                                      placeholder="ปล่อยว่างได้"
                                     />
                                   </div>
                                   <Button onClick={handleUpdateTreatment} className="w-full">
@@ -523,7 +666,7 @@ export function SettingsPage() {
               </CardTitle>
               <CardDescription>จัดการข้อมูลทั่วไปของคลินิก</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+          <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="clinic-name">ชื่อคลินิก</Label>
                 <Input
