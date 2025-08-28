@@ -201,17 +201,19 @@ export default function BookingPage({ onBack }: BookingPageProps) {
                   }
                 />
               </SelectTrigger>
-              <SelectContent>
-                {activeTreatments.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.label}
-                    {typeof (t as any).durationMin === "number"
-                      ? ` · ${(t as any).durationMin} นาที`
-                      : ""}
-                    {typeof t.price === "number" ? ` · ${t.price.toLocaleString()} บาท` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
+              <SelectContent className="bg-white text-black">
+              {activeTreatments.map((t) => (
+                <SelectItem
+                  key={t.id}
+                  value={t.id}
+                  className="bg-white text-black hover:bg-gray-100"
+                >
+                  {t.label}
+                  {typeof (t as any).durationMin === "number" ? ` · ${(t as any).durationMin} นาที` : ""}
+                  {typeof t.price === "number" ? ` · ${t.price.toLocaleString()} บาท` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
             </Select>
           )}
         </CardContent>
