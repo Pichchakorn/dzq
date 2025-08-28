@@ -1,4 +1,3 @@
-// src/components/BookingPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "./ui/card";
 import { Button } from "./ui/button";
@@ -14,7 +13,9 @@ import { db } from "../lib/firebase";
 import type { Treatment } from "../types";
 
 const fmtYMD = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
 
 interface BookingPageProps {
   onBack?: () => void;
@@ -28,7 +29,7 @@ export default function BookingPage({ onBack }: BookingPageProps) {
   const [treatmentId, setTreatmentId] = useState<string>("");
   const [time, setTime] = useState<string>("");
 
-  // ---------- โหลดรายการการรักษา ----------
+  /* ---------- โหลดรายการการรักษา ---------- */
   const [treatments, setTreatments] = useState<Treatment[]>([]);
   const [loadingTreat, setLoadingTreat] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -49,7 +50,7 @@ export default function BookingPage({ onBack }: BookingPageProps) {
             durationMin: (x.duration ?? x.durationMin) ?? undefined,
             price: typeof x.price === "number" ? x.price : undefined,
             order: typeof x.order === "number" ? x.order : undefined,
-          };
+          } as Treatment;
         });
         setTreatments(arr);
         setLoadingTreat(false);
@@ -72,57 +73,58 @@ export default function BookingPage({ onBack }: BookingPageProps) {
   const labelFrom = (id: string) =>
     activeTreatments.find((t) => t.id === id)?.label ?? "";
 
-  // ---------- วัน/เวลา ----------
+  /* ---------- วัน/เวลา ---------- */
   const ymd = useMemo(() => (selectedDate ? fmtYMD(selectedDate) : ""), [selectedDate]);
 
-  // ✅ รองรับได้ทั้ง string[] และ {date,name}[]
+  // รองรับ holidays ทั้งแบบ string[] และ {date,name}[]
   const holidays = useMemo(
     () =>
-      (clinicSettings.holidays as any[] | undefined)?.map((x) =>
-        typeof x === "string" ? { date: x, name: undefined } : x
-      )?.filter((h) => h && typeof h.date === "string") ?? [],
+      (clinicSettings.holidays as any[] | undefined)
+        ?.map((x) => (typeof x === "string" ? { date: x } : x))
+        ?.filter((h) => h && typeof h.date === "string") ?? [],
     [clinicSettings.holidays]
   );
 
   // ปิดวันหยุดบนปฏิทิน
   const disabledDays = useMemo(
-    () => holidays.map((h) => new Date(h.date + "T00:00:00")),
+    () => holidays.map((h) => new Date(`${h.date}T00:00:00`)),
     [holidays]
   );
 
   const ymdOf = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate()
+    ).padStart(2, "0")}`;
 
   const isHoliday = (d?: Date) => !!(d && holidays.some((h) => h.date === ymdOf(d)));
 
-  // ดึงช่องเวลาที่ “ว่างจริง” จาก Context (ถูกกรองวันหยุด/ล็อก/จองแล้ว)
+  // ช่องเวลา “ว่างจริง”
   const baseSlots = useMemo(() => {
     if (!ymd || isHoliday(selectedDate)) return [];
     return getAvailableSlots(ymd);
-    //eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ymd, selectedDate, holidays, getAvailableSlots]);
+  }, [ymd, selectedDate, getAvailableSlots, holidays]);
 
   // กันเวลาที่ผ่านมาแล้วของ “วันนี้”
-  const now = new Date();
-  const isToday = selectedDate && selectedDate.toDateString() === now.toDateString();
   const slots = useMemo(() => {
     if (!selectedDate) return [];
+    const now = new Date();
+    const isToday = selectedDate.toDateString() === now.toDateString();
     if (!isToday) return baseSlots;
+
     return baseSlots.filter((t) => {
       const [h, m] = t.split(":").map(Number);
       const dt = new Date(selectedDate);
       dt.setHours(h, m, 0, 0);
       return dt > now;
     });
-  }, [baseSlots, selectedDate, isToday]);
+  }, [baseSlots, selectedDate]);
 
   const canSubmit = Boolean(selectedDate && treatmentId && time && !isHoliday(selectedDate));
 
-  // ---------- ยืนยันการจอง ----------
+  /* ---------- ยืนยันการจอง ---------- */
   const submit = async () => {
     if (!user || !canSubmit || !selectedDate) return;
 
-    // กัน race condition: ช่องเวลาเพิ่งถูกจอง/ล็อก
     if (!slots.includes(time)) {
       alert("ช่วงเวลานี้ไม่สามารถจองได้แล้ว");
       return;
@@ -174,43 +176,45 @@ export default function BookingPage({ onBack }: BookingPageProps) {
           <CardHeader>
             <CardTitle>ประเภทการรักษา</CardTitle>
           </CardHeader>
-          <CardContent>
-            <Label className="mb-2 block">เลือกบริการที่ต้องการ</Label>
-            {loadingTreat ? (
-              <p className="text-sm text-gray-500">กำลังโหลดรายการ...</p>
-            ) : loadError ? (
-              <p className="text-sm text-red-600">{loadError}</p>
-            ) : activeTreatments.length === 0 ? (
-              <p className="text-sm text-gray-500">ยังไม่มีประเภทการรักษาที่เปิดใช้งาน</p>
-            ) : (
-              <Select
-                value={treatmentId}
-                onValueChange={setTreatmentId}
-                disabled={!selectedDate || isHoliday(selectedDate)}
-              >
-                <SelectTrigger>
-                  <SelectValue
-                    placeholder={
-                      !selectedDate
-                        ? "กรุณาเลือกวันที่ก่อน"
-                        : isHoliday(selectedDate)
-                        ? "วันนี้เป็นวันหยุด"
-                        : "เลือกประเภทการรักษา"
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeTreatments.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.label}
-                      {typeof t.durationMin === "number" ? ` · ${t.durationMin} นาที` : ""}
-                      {typeof t.price === "number" ? ` · ${t.price.toLocaleString()} บาท` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </CardContent>
+        <CardContent>
+          <Label className="mb-2 block">เลือกบริการที่ต้องการ</Label>
+          {loadingTreat ? (
+            <p className="text-sm text-gray-500">กำลังโหลดรายการ...</p>
+          ) : loadError ? (
+            <p className="text-sm text-red-600">{loadError}</p>
+          ) : activeTreatments.length === 0 ? (
+            <p className="text-sm text-gray-500">ยังไม่มีประเภทการรักษาที่เปิดใช้งาน</p>
+          ) : (
+            <Select
+              value={treatmentId}
+              onValueChange={setTreatmentId}
+              disabled={!selectedDate || isHoliday(selectedDate)}
+            >
+              <SelectTrigger>
+                <SelectValue
+                  placeholder={
+                    !selectedDate
+                      ? "กรุณาเลือกวันที่ก่อน"
+                      : isHoliday(selectedDate)
+                      ? "วันนี้เป็นวันหยุด"
+                      : "เลือกประเภทการรักษา"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {activeTreatments.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.label}
+                    {typeof (t as any).durationMin === "number"
+                      ? ` · ${(t as any).durationMin} นาที`
+                      : ""}
+                    {typeof t.price === "number" ? ` · ${t.price.toLocaleString()} บาท` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </CardContent>
         </Card>
 
         {/* Time slots */}

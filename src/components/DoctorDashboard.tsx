@@ -255,7 +255,8 @@ export function DoctorDashboard() {
                   <CardDescription>รายการนัดหมายในอนาคต</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {allScheduledAppointments.length > 0 ? (
+                  <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                    {allScheduledAppointments.length > 0 ? (
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -285,9 +286,10 @@ export function DoctorDashboard() {
                   ) : (
                     <p className="text-center text-gray-500 py-8">ไม่มีคิวที่กำลังจะมาถึง</p>
                   )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
             {/* History */}
             <TabsContent value="history">
