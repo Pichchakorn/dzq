@@ -5,6 +5,7 @@ import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy,
   query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 import { useAuth } from "./AuthContext";
 import type { Appointment } from "../types";
 
@@ -47,7 +48,7 @@ type Ctx = {
   bookedSlots: BookedSlot[];
 
   createAppointment: (
-    a: Omit<Appointment, "id" | "createdAt" | "status"> & { status?: "scheduled" }
+    a: Omit<Appointment, "id" | "createdAt" | "status" | "patientId"> & { status?: "scheduled" }
   ) => Promise<string>;
 
   updateAppointment: (id: string, patch: Partial<Appointment>) => Promise<void>;
@@ -75,6 +76,7 @@ const DEFAULT_SETTINGS: ClinicSettings = {
 /* ---------------- Provider ---------------- */
 export function AppointmentProvider({ children }: { children: React.ReactNode }) {
   const { user, isAdmin } = useAuth();
+  const auth = getAuth();
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [clinicSettings, setClinicSettings] = useState<ClinicSettings>(DEFAULT_SETTINGS);
@@ -84,17 +86,21 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
 
   /* Stream appointments (ของตัวเอง ยกเว้นแอดมินเห็นทั้งหมด) */
   useEffect(() => {
-    if (!user) return;
     const col = collection(db, "appointments");
+    // ใช้ uid จาก Firebase เสมอ
+    const uid = auth.currentUser?.uid;
+    if (!uid && !isAdmin) return;
+
     const qy = isAdmin
       ? query(col, orderBy("date"), orderBy("time"))
-      : query(col, where("patientId", "==", user.id), orderBy("date"), orderBy("time"));
+      : query(col, where("patientId", "==", uid!), orderBy("date"), orderBy("time"));
 
     return onSnapshot(qy, (snap) => {
       const list: Appointment[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
       setAppointments(list);
     });
-  }, [user?.id, isAdmin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.currentUser?.uid, isAdmin]);
 
   /* Load clinic settings + treatments */
   useEffect(() => {
@@ -139,8 +145,11 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
 
   /* Actions */
   const createAppointment: Ctx["createAppointment"] = async (a) => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) throw new Error("ยังไม่ได้ล็อกอิน");
+
     const payload = {
-      patientId: a.patientId,
+      patientId: uid, // ✅ ใช้ UID จาก Firebase
       patientName: a.patientName,
       treatmentType: a.treatmentType,
       date: a.date,
@@ -167,7 +176,7 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       tx.set(bookedRef, {
         date: payload.date,
         time: payload.time,
-        patientId: payload.patientId,
+        patientId: uid,
         createdAt: serverTimestamp(),
       } as BookedSlot);
 
@@ -281,9 +290,9 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       all.push(`${hh}:${mm}`);
     }
 
-    // ✅ ตัดเวลาที่ถูกจองไปแล้ว (bookedSlots) ออกทันที
+    // ❗ ตัดเวลาที่ถูกจองไปแล้ว (bookedSlots) ออกทันที
     const takenByBooked = new Set(bookedSlots.filter((b) => b.date === ymd).map((b) => b.time));
-    // กันเผื่อกรณีมีใบนัด scheduled ในวันนั้น (สำรองอีกชั้น)
+    // กันเผื่อมีใบนัด scheduled ในวันนั้น
     const takenByAppt   = new Set(appointments.filter((a) => a.date === ymd && a.status === "scheduled").map((a) => a.time));
     // เวลาที่แอดมินล็อก
     const locked        = new Set(lockedSlots.filter((s) => s.date === ymd).map((s) => s.time));
