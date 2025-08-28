@@ -15,6 +15,8 @@ import { Badge } from "./ui/badge";
 import { useAuth } from "../contexts/AuthContext";
 import { useAppointments } from "../contexts/AppointmentContext";
 import type { Appointment } from "../types";
+import { toast } from "sonner";
+
 
 interface PatientDashboardProps {
   onNavigate: (page: string) => void;
@@ -48,8 +50,7 @@ const statusVariant = (s: Status) =>
 
 export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
   const { user } = useAuth();
-  const { appointments } = useAppointments();
-
+  const { appointments, cancelAppointment } = useAppointments(); // ✅ ดึง cancelAppointment มาใช้
   const pid = user?.id ?? "";
 
   // นัดของผู้ใช้คนนี้
@@ -76,6 +77,19 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
         .slice(0, 3),
     [userAppointments]
   );
+
+  // ยกเลิกนัด
+  const onCancel = async (id: string, date: string, time: string) => {
+    const ok = window.confirm(`ต้องการยกเลิกคิววันที่ ${date} เวลา ${time} ใช่ไหม?`);
+    if (!ok) return;
+
+    try {
+      await cancelAppointment(id, "ไม่สะดวกมาตามนัด");
+      toast.success("ยกเลิกคิวเรียบร้อย");
+    } catch (e: any) {
+      toast.error(e?.message || "ยกเลิกไม่สำเร็จ");
+    }
+  };
 
 // ...existing code...
 
@@ -104,18 +118,26 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
       {/* Next Appointment + Recent Appointments side by side */}
       <div className="w-full min-w-0 grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* นัดหมายต่อไป */}
-        <Card className="w-full">
-          <CardHeader>
-            <CardTitle className="flex items-center">
-              <Calendar className="h-5 w-5 mr-2" />
-              นัดหมายต่อไป
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div style={{ maxHeight: 320, overflowY: "auto" }}>
-              {upcomingAppointments.length > 0 ? (
-                upcomingAppointments.map((appointment) => (
-                  <div key={appointment.id} className="flex items-center justify-between py-3 border-b last:border-b-0">
+              <Card className="w-full">
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Calendar className="h-5 w-5 mr-2" />
+            นัดหมายต่อไป
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div style={{ maxHeight: 320, overflowY: "auto" }}>
+            {upcomingAppointments.length > 0 ? (
+              upcomingAppointments.map((appointment) => {
+                const apptDt = new Date(`${appointment.date}T${appointment.time}:00`);
+                const twoHoursFromNow = new Date(Date.now() + 2 * 60 * 60 * 1000);
+                const canCancel = appointment.status === "scheduled" && apptDt > twoHoursFromNow;
+
+                return (
+                  <div
+                    key={appointment.id}
+                    className="flex items-center justify-between py-3 border-b last:border-b-0"
+                  >
                     <div>
                       <p className="font-medium">{appointment.treatmentType}</p>
                       <p className="text-sm text-gray-600 flex items-center mt-1">
@@ -131,22 +153,34 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
                         {appointment.time} น.
                       </p>
                     </div>
-                    <Badge variant={statusVariant(appointment.status)}>
-                      {statusLabel(appointment.status)}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={statusVariant(appointment.status)}>
+                        {statusLabel(appointment.status)}
+                      </Badge>
+                      {canCancel && (
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => onCancel(appointment.id!, appointment.date, appointment.time)}
+                        >
+                          ยกเลิก
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                ))
-              ) : (
-                <p className="text-center text-gray-500 py-8">ไม่มีนัดหมายล่วงหน้า</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                );
+              })
+            ) : (
+              <p className="text-center text-gray-500 py-8">ไม่มีนัดหมายล่วงหน้า</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-        {/* นัดหมายล่าสุด */}
-        <Card className="w-full">
-          <CardHeader>
-            <CardTitle>นัดหมายล่าสุด</CardTitle>
+      {/* นัดหมายล่าสุด */}
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle>นัดหมายล่าสุด</CardTitle>
             <CardDescription>ประวัติการเข้ารับการรักษา</CardDescription>
           </CardHeader>
           <CardContent>

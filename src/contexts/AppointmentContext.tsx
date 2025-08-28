@@ -5,7 +5,7 @@ import {
   addDoc, collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, orderBy,
   query, runTransaction, serverTimestamp, setDoc, updateDoc, where, writeBatch,
 } from "firebase/firestore";
-import { getAuth } from "firebase/auth";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { useAuth } from "./AuthContext";
 import type { Appointment } from "../types";
 
@@ -52,6 +52,7 @@ type Ctx = {
   ) => Promise<string>;
 
   updateAppointment: (id: string, patch: Partial<Appointment>) => Promise<void>;
+  cancelAppointment: (id: string, reason?: string) => Promise<void>;
   clearQueue: (ymd: string, to: "completed" | "cancelled", reason?: string) => Promise<number>;
   getAvailableSlots: (ymd: string) => string[];
 
@@ -75,8 +76,10 @@ const DEFAULT_SETTINGS: ClinicSettings = {
 
 /* ---------------- Provider ---------------- */
 export function AppointmentProvider({ children }: { children: React.ReactNode }) {
-  const { user, isAdmin } = useAuth();
+  const { isAdmin } = useAuth();
   const auth = getAuth();
+
+  const [uid, setUid] = useState<string | null>(auth.currentUser?.uid ?? null);
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [clinicSettings, setClinicSettings] = useState<ClinicSettings>(DEFAULT_SETTINGS);
@@ -84,23 +87,27 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
   const [lockedSlots, setLockedSlots] = useState<LockedSlot[]>([]);
   const [bookedSlots, setBookedSlots] = useState<BookedSlot[]>([]);
 
+  // ติดตามการเปลี่ยนแปลงสถานะล็อกอิน เพื่อให้ uid เสถียร
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
+    return unsub;
+  }, [auth]);
+
   /* Stream appointments (ของตัวเอง ยกเว้นแอดมินเห็นทั้งหมด) */
   useEffect(() => {
-    const col = collection(db, "appointments");
-    // ใช้ uid จาก Firebase เสมอ
-    const uid = auth.currentUser?.uid;
-    if (!uid && !isAdmin) return;
+    const colRef = collection(db, "appointments");
+    if (!isAdmin && !uid) return; // ยังไม่รู้ uid ก็ยังไม่ subscribe
 
     const qy = isAdmin
-      ? query(col, orderBy("date"), orderBy("time"))
-      : query(col, where("patientId", "==", uid!), orderBy("date"), orderBy("time"));
+      ? query(colRef, orderBy("date"), orderBy("time"))
+      : query(colRef, where("patientId", "==", uid!), orderBy("date"), orderBy("time"));
 
-    return onSnapshot(qy, (snap) => {
+    const unsub = onSnapshot(qy, (snap) => {
       const list: Appointment[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
       setAppointments(list);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.currentUser?.uid, isAdmin]);
+    return unsub;
+  }, [uid, isAdmin]);
 
   /* Load clinic settings + treatments */
   useEffect(() => {
@@ -129,27 +136,27 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
 
   /* Stream locked slots */
   useEffect(() => {
-    const col = collection(db, "lockedSlots");
-    return onSnapshot(col, (snap) => {
+    const colRef = collection(db, "lockedSlots");
+    return onSnapshot(colRef, (snap) => {
       setLockedSlots(snap.docs.map((d) => d.data() as LockedSlot));
     });
   }, []);
 
   /* Stream booked slots (กันชนเวลาที่จองแล้ว) */
   useEffect(() => {
-    const col = collection(db, "bookedSlots");
-    return onSnapshot(col, (snap) => {
+    const colRef = collection(db, "bookedSlots");
+    return onSnapshot(colRef, (snap) => {
       setBookedSlots(snap.docs.map((d) => d.data() as BookedSlot));
     });
   }, []);
 
   /* Actions */
   const createAppointment: Ctx["createAppointment"] = async (a) => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) throw new Error("ยังไม่ได้ล็อกอิน");
+    const currentUid = auth.currentUser?.uid;
+    if (!currentUid) throw new Error("ยังไม่ได้ล็อกอิน");
 
     const payload = {
-      patientId: uid, // ✅ ใช้ UID จาก Firebase
+      patientId: currentUid, // ✅ ใช้ UID จาก Firebase
       patientName: a.patientName,
       treatmentType: a.treatmentType,
       date: a.date,
@@ -172,11 +179,11 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       const bookedSnap = await tx.get(bookedRef);
       if (bookedSnap.exists()) throw new Error("ช่วงเวลานี้ถูกจองแล้ว");
 
-      // กันชน slot
+      // กันชน slot (id = date_time ตรงกับกติกา rules)
       tx.set(bookedRef, {
         date: payload.date,
         time: payload.time,
-        patientId: uid,
+        patientId: currentUid,
         createdAt: serverTimestamp(),
       } as BookedSlot);
 
@@ -202,6 +209,14 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       return;
     }
     await updateDoc(doc(db, "appointments", id), patch as any);
+  };
+
+  // helper ยกเลิกคิว (สำหรับ UI เรียกใช้ง่าย ๆ)
+  const cancelAppointment: Ctx["cancelAppointment"] = async (id, reason) => {
+    await updateAppointment(id, {
+      status: "cancelled",
+      cancelReason: reason || "ยกเลิกโดยผู้ใช้",
+    });
   };
 
   const clearQueue: Ctx["clearQueue"] = async (ymd, to, reason) => {
@@ -254,7 +269,7 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
     const batch = writeBatch(db);
     const col = collection(db, "treatmentTypes");
     list.forEach((t) => {
-      const id = t.id || crypto.randomUUID();
+      const id = t.id || (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}_${Math.random()}`);
       batch.set(doc(col, id), { name: t.name, duration: t.duration, price: t.price }, { merge: true });
     });
     await batch.commit();
@@ -290,11 +305,9 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       all.push(`${hh}:${mm}`);
     }
 
-    // ❗ ตัดเวลาที่ถูกจองไปแล้ว (bookedSlots) ออกทันที
+    // ❗ ตัดเวลาที่ถูกจองไปแล้ว/ล็อกออกทันที
     const takenByBooked = new Set(bookedSlots.filter((b) => b.date === ymd).map((b) => b.time));
-    // กันเผื่อมีใบนัด scheduled ในวันนั้น
     const takenByAppt   = new Set(appointments.filter((a) => a.date === ymd && a.status === "scheduled").map((a) => a.time));
-    // เวลาที่แอดมินล็อก
     const locked        = new Set(lockedSlots.filter((s) => s.date === ymd).map((s) => s.time));
 
     return all.filter((t) => !takenByBooked.has(t) && !takenByAppt.has(t) && !locked.has(t));
@@ -309,6 +322,7 @@ export function AppointmentProvider({ children }: { children: React.ReactNode })
       bookedSlots,
       createAppointment,
       updateAppointment,
+      cancelAppointment,
       clearQueue,
       getAvailableSlots,
       pushNotification,
