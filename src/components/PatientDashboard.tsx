@@ -68,11 +68,11 @@ export function PatientDashboard({ onNavigate }: PatientDashboardProps) {
     [userAppointments]
   );
 
-  // นัดล่าสุด (เฉพาะที่ผ่านไปแล้ว หรือสถานะไม่ใช่ scheduled) เอา 3 รายการล่าสุด
+  // นัดล่าสุด (เฉพาะที่สถานะเสร็จสิ้นเท่านั้น)
   const recentAppointments = useMemo(
     () =>
       [...userAppointments]
-        .filter(a => a.status !== "scheduled" || isPast(a.date, a.time))
+        .filter(a => a.status === "completed")
         .sort((a, b) => cmpDesc(key(a.date, a.time), key(b.date, b.time)))
         .slice(0, 3),
     [userAppointments]
