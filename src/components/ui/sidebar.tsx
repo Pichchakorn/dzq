@@ -24,7 +24,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./tooltip";
-
+import { useAppointments } from "../../contexts/AppointmentContext"; // ปรับ path ให้ตรงกับโปรเจกต์
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
@@ -43,6 +43,23 @@ type SidebarContextProps = {
 };
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null);
+
+function SidebarClinicContact() {
+  const { clinicSettings } = useAppointments();
+  const info = clinicSettings?.clinicInfo;
+
+  if (!info) return null;
+
+  return (
+    <div className="mt-4 text-xs text-sidebar-foreground/80">
+      <div className="font-bold mb-1">ติดต่อคลินิก</div>
+      <div>ชื่อ: {info.name}</div>
+      <div>โทร: {info.phone}</div>
+      <div>อีเมล: {info.email}</div>
+      <div>ที่อยู่: {info.address}</div>
+    </div>
+  );
+}
 
 function useSidebar() {
   const context = React.useContext(SidebarContext);
@@ -350,7 +367,9 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
       data-sidebar="footer"
       className={cn("flex flex-col gap-2 p-2", className)}
       {...props}
-    />
+    >
+      <SidebarClinicContact />
+    </div>
   );
 }
 

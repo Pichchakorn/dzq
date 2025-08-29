@@ -11,6 +11,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { useAppointments } from "../contexts/AppointmentContext"; 
 
 interface NavigationProps {
   currentPage: string;
@@ -32,6 +33,8 @@ export function Navigation({
   isAdmin,
 }: NavigationProps) {
   const { user, logout, isAdmin: ctxIsAdmin } = useAuth();
+  const { clinicSettings } = useAppointments(); // เพิ่มบรรทัดนี้
+  const info = clinicSettings?.clinicInfo;      // เพิ่มบรรทัดนี้
   const admin = typeof isAdmin === "boolean" ? isAdmin : ctxIsAdmin;
 
   const patientMenuItems: MenuItem[] = [
@@ -127,6 +130,16 @@ export function Navigation({
           ออกจากระบบ
         </Button>
       </div>
+       {/* Clinic Contact */}
+      {info && (
+        <div className="p-4 border-t border-gray-200 text-xs text-gray-600">
+          <div className="font-bold mb-1">ติดต่อคลินิก</div>
+          <div>ชื่อ: {info.name}</div>
+          <div>โทร: {info.phone}</div>
+          <div>อีเมล: {info.email}</div>
+          <div>ที่อยู่: {info.address}</div>
+        </div>
+      )}
     </aside>
   );
 }

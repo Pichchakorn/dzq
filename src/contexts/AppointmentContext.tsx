@@ -12,11 +12,19 @@ import type { Appointment } from "../types";
 /* ---------------- Types ---------------- */
 export type Holiday = { date: string; name?: string };
 
+export type ClinicInfo = {
+  name: string;
+  address: string;
+  phone: string;
+  email: string;
+};
+
 export type ClinicSettings = {
   workingHours: { start: string; end: string };
   breakTime: { start: string; end: string };
   slotDuration: number;
   holidays: Holiday[];
+  clinicInfo?: ClinicInfo;
 };
 
 export type TreatmentType = { id: string; name: string; duration: number; price: number };
